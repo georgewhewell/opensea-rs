@@ -1,11 +1,11 @@
-use ethers::types::Address;
+use ethers::{prelude::U256, types::Address};
 use reqwest::{
     header::{self, HeaderMap},
     Client, ClientBuilder,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Network, Order};
+use crate::types::{Network, Order, Asset};
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -33,6 +33,30 @@ impl OpenSeaApi {
         }
     }
 
+    // pub async fn get_asset(
+    //     &self,
+    //     address: Address,
+    //     token_id: U256,
+    // ) -> Result<Asset, OpenSeaApiError> {
+    //     let url = self.network.asset(address, token_id);
+
+    //     // convert the request to a url encoded order
+    //     // let mut map = std::collections::HashMap::new();
+    //     // map.insert("side", serde_json::to_value(req.side)?);
+    //     // map.insert("token_id", serde_json::to_value(req.token_id)?);
+    //     // map.insert(
+    //     //     "asset_contract_address",
+    //     //     serde_json::to_value(req.contract_address)?,
+    //     // );
+    //     // map.insert("limit", serde_json::to_value(req.limit)?);
+
+    //     let res = self.client.get(url).send().await?;
+    //     let text = res.text().await?;
+    //     let resp: OrderResponse = serde_json::from_str(&text)?;
+
+    //     Ok(resp)
+    // }
+
     pub async fn get_orders(&self, req: OrderRequest) -> Result<Vec<Order>, OpenSeaApiError> {
         let orderbook = self.network.orderbook();
         let url = format!("{}/orders", orderbook);
@@ -49,6 +73,7 @@ impl OpenSeaApi {
 
         let res = self.client.get(url).query(&map).send().await?;
         let text = res.text().await?;
+        // println!("test: {}", &text);
         let resp: OrderResponse = serde_json::from_str(&text)?;
 
         Ok(resp.orders)
@@ -98,6 +123,15 @@ impl Default for OpenSeaApiConfig {
     }
 }
 
+impl OpenSeaApiConfig {
+    pub fn with_api_key(api_key: &str) -> Self {
+        Self {
+            api_key: Some(api_key.to_owned()),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum OpenSeaApiError {
     #[error(transparent)]
@@ -116,7 +150,7 @@ mod tests {
 
     #[tokio::test]
     async fn can_get_order() {
-        let api = OpenSeaApi::new(OpenSeaApiConfig::default());
+        let api = OpenSeaApi::new(OpenSeaApiConfig::with_api_key(""));
 
         let req = OrderRequest {
             side: 1,
@@ -135,4 +169,26 @@ mod tests {
         assert_eq!(order.maker_protocol_fee, 0.into());
         assert_eq!(order.taker_protocol_fee, 0.into());
     }
+
+    // #[tokio::test]
+    // async fn can_make_bid() {
+    //     let api = OpenSeaApi::new(OpenSeaApiConfig::default());
+
+    //     let req = BidRequest {
+    //         side: 1,
+    //         token_id: 2292.to_string(),
+    //         contract_address: "0x7d256d82b32d8003d1ca1a1526ed211e6e0da9e2"
+    //             .parse()
+    //             .unwrap(),
+    //         limit: 99,
+    //     };
+    //     let addr = req.contract_address;
+    //     let order = api.get_order(req).await.unwrap();
+    //     let order = MinimalOrder::from(order);
+    //     assert_eq!(order.target, addr);
+    //     assert_eq!(order.maker_relayer_fee, 600.into());
+    //     assert_eq!(order.taker_relayer_fee, 0.into());
+    //     assert_eq!(order.maker_protocol_fee, 0.into());
+    //     assert_eq!(order.taker_protocol_fee, 0.into());
+    // }
 }

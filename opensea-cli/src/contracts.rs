@@ -57,18 +57,19 @@ pub async fn deploy(opts: DeployOpts) -> color_eyre::Result<Address> {
         let provider = SignerMiddleware::new(provider.clone(), signer);
         Arc::new(provider)
     };
+    todo!()
+    // // compile the briber contract each time
+    // let input = CompilerInput::new("briber.sol")?;
+    // let solc = Solc::new("briber.sol").compile(&input)?;
+    // let contract = solc.get("NFTRevert").expect("could not find contract");
+    // let briber = ContractFactory::new(contract.abi.clone(), contract.bytecode.clone(), provider);
 
-    // compile the briber contract each time
-    let solc = ethers::utils::Solc::new("briber.sol").build()?;
-    let contract = solc.get("NFTRevert").expect("could not find contract");
-    let briber = ContractFactory::new(contract.abi.clone(), contract.bytecode.clone(), provider);
+    // // deploy it
+    // let call = briber.deploy(())?;
+    // let contract = call.send().await?;
+    // println!("Bribe contract deployed: {:?}", contract.address());
 
-    // deploy it
-    let call = briber.deploy(())?;
-    let contract = call.send().await?;
-    println!("Bribe contract deployed: {:?}", contract.address());
-
-    Ok(contract.address())
+    // Ok(contract.address())
 }
 
 use opensea::{get_n_cheapest_orders, OpenSeaApi};
@@ -80,7 +81,7 @@ pub async fn prices(opts: NftOpts) -> color_eyre::Result<()> {
     for (id, _) in ids.iter().zip(&quantities) {
         let orders = get_n_cheapest_orders(&api, opts.address, *id, 10).await?;
         for order in orders {
-            println!("{:?},{:?}", *id, order.current_price);
+            // println!("{:?},{:?}", *id, order.current_price);
         }
     }
     Ok(())

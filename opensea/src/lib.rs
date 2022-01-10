@@ -44,7 +44,7 @@ pub async fn get_n_cheapest_orders(
         .into_iter()
         .filter(|order| order.base_price > parse_units("1", 16).unwrap())
         .collect::<Vec<_>>();
-    orders.sort_by(|o1, o2| o1.current_price.cmp(&o2.current_price));
+    // orders.sort_by(|o1, o2| o1.current_price.cmp(&o2.current_price));
 
     // get at most `orders.len()` items
     let len = std::cmp::min(num, orders.len());
@@ -85,8 +85,8 @@ impl<M: Middleware> Client<M> {
         let mut calls = Vec::new();
         for sell in sells {
             println!(
-                "[Token Id = {:?}] Maker: {:?}. Price: {:?}",
-                args.token_id, sell.maker.address, sell.current_price,
+                "[Token Id = {:?}] Maker: {:?}",
+                args.token_id, sell.maker.address,
             );
 
             // make its corresponding buy
@@ -154,7 +154,7 @@ impl<M: Middleware> Client<M> {
         // them wrongly, so we need to convert them to u256
         // to work :shrug:
         let methods = [
-            ethers::types::U256::from(buy.fee_method),
+            buy.fee_method,
             buy.side.into(),
             buy.sale_kind.into(),
             buy.how_to_call.into(),
@@ -163,7 +163,7 @@ impl<M: Middleware> Client<M> {
             sell.sale_kind.into(),
             sell.how_to_call.into(),
         ];
-        let vs: [U256; 2] = [0.into(), sell.v.into()];
+        let vs: [u8; 2] = [0, sell.v];
 
         // TODO: This should be [H256; 5] in Abigen
         let rss_metadata = [[0; 32], [0; 32], sell.r.0, sell.s.0, [0; 32]];
@@ -173,34 +173,32 @@ impl<M: Middleware> Client<M> {
             .contracts
             // Abigen error, doesn't generate a correct signature for function with underscore
             // in its name
-            .method(
-                "atomicMatch_",
-                (
-                    addrs,
-                    uints,
-                    methods,
-                    buy.calldata.to_vec(),
-                    sell.calldata.to_vec(),
-                    buy.replacement_pattern.to_vec(),
-                    sell.replacement_pattern.to_vec(),
-                    buy.static_extradata.to_vec(),
-                    sell.static_extradata.to_vec(),
-                    vs,
-                    rss_metadata,
-                ),
-            )
-            .unwrap();
+            .atomic_match(
+                addrs,
+                uints,
+                methods,
+                buy.calldata,
+                sell.calldata,
+                buy.replacement_pattern,
+                sell.replacement_pattern,
+                buy.static_extradata,
+                sell.static_extradata,
+                vs,
+                rss_metadata,
+            );
 
         // set the value
-        let call = call.value(buy.current_price);
+        let call = call.value(buy.base_price);
 
         // set the gas
-        // let gas = call.estimate_gas().await.expect("could not estimate gas");
+        let gas = call.estimate_gas().await.expect("could not estimate gas");
         // TODO: Why does gas estimation not work?
         let call = call.gas(300_000);
 
         Ok(call)
     }
+
+    // fn encode_buy(schema: WyvernSchema)
 }
 
 #[cfg(test)]
@@ -221,14 +219,14 @@ mod tests {
     );
 
     #[tokio::test]
-    #[ignore]
+    // #[ignore]
     async fn can_buy_an_nft() {
-        let provider = Provider::try_from("http://localhost:8545").unwrap();
+        let provider = Provider::try_from("http://localhost:8889").unwrap();
         let provider = Arc::new(provider);
 
         let accounts = provider.get_accounts().await.unwrap();
         let taker = accounts[0].clone();
-        let id = 1126.into();
+        let id = 6508.into();
 
         let address = "0x91f7bb6900d65d004a659f34205beafc3b4e136c"
             .parse::<Address>()
@@ -252,7 +250,7 @@ mod tests {
         };
 
         // instantiate the client
-        let client = Client::new(provider.clone(), OpenSeaApiConfig::default());
+        let client = Client::new(provider.clone(), OpenSeaApiConfig::with_api_key(""));
 
         // execute the call
         let call = client.buy(args, 1).await.unwrap()[0].clone();
@@ -267,9 +265,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    // #[ignore]
     async fn can_buy_an_erc1155() {
-        let provider = Provider::try_from("http://localhost:8545").unwrap();
+        let provider = Provider::try_from("http://localhost:8889").unwrap();
         let provider = Arc::new(provider);
 
         let accounts = provider.get_accounts().await.unwrap();
@@ -299,7 +297,7 @@ mod tests {
         };
 
         // instantiate the client
-        let client = Client::new(provider.clone(), OpenSeaApiConfig::default());
+        let client = Client::new(provider.clone(), OpenSeaApiConfig::with_api_key(""));
 
         // execute the call
         let call = client.buy(args, 1).await.unwrap()[0].clone();
