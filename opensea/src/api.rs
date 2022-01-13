@@ -98,6 +98,15 @@ impl Default for OpenSeaApiConfig {
     }
 }
 
+impl OpenSeaApiConfig {
+    pub fn with_api_key(api_key: &str) -> Self {
+        Self {
+            api_key: Some(api_key.to_string()),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum OpenSeaApiError {
     #[error(transparent)]
