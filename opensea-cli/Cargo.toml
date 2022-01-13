@@ -7,7 +7,7 @@ edition = "2018"
 
 [dependencies]
 opensea = { path = "../opensea" }
-ethers = { version = "0.6", features = ["abigen"] }
+ethers = { git = "https://github.com/gakonst/ethers-rs.git", features = ["abigen"] }
 tokio = { version = "1.9.0", features = ["macros"] }
 gumdrop = "0.8.0"
 color-eyre = "0.5.11"

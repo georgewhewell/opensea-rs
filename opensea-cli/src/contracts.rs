@@ -129,219 +129,220 @@ async fn create_transactions<M: Middleware + 'static>(
 }
 
 // Create the signed txs bundle
-async fn sign_bundle<M: Middleware + 'static, S: Signer + 'static>(
-    provider: Arc<SignerMiddleware<M, S>>,
-    txs: &[Eip1559TransactionRequest],
-    ids: &[U256],
-) -> color_eyre::Result<BundleRequest> {
-    let mut bundle = ethers_flashbots::BundleRequest::new();
-    let mut sum = U256::from(0);
-    for (i, tx) in txs.iter().enumerate() {
-        if let Some(id) = ids.get(i) {
-            println!(
-                "[TokenId = {:?}] Signing bundle tx with {:?} Wei (max-priority-fee: {:?}, max-total-fee: {:?}, gas-limit: {:?})",
-                id,
-                tx.value.unwrap_or_default(),
-                tx.max_priority_fee_per_gas.unwrap_or_default(),
-                tx.max_fee_per_gas.unwrap_or_default(),
-                tx.gas.unwrap_or_default(),
-            );
-        } else {
-            println!(
-                "Signing bribe tx with {:?} Wei (max-priority-fee: {:?}, max-total-fee: {:?}, gas-limit: {:?})",
-                tx.value.unwrap_or_default(),
-                tx.max_priority_fee_per_gas.unwrap_or_default(),
-                tx.max_fee_per_gas.unwrap_or_default(),
-                tx.gas.unwrap_or_default(),
-            );
-        }
+// async fn sign_bundle<M: Middleware + 'static, S: Signer + 'static>(
+//     provider: Arc<SignerMiddleware<M, S>>,
+//     txs: &[Eip1559TransactionRequest],
+//     ids: &[U256],
+// ) -> color_eyre::Result<BundleRequest> {
+//     let mut bundle = ethers_flashbots::BundleRequest::new();
+//     let mut sum = U256::from(0);
+//     for (i, tx) in txs.iter().enumerate() {
+//         if let Some(id) = ids.get(i) {
+//             println!(
+//                 "[TokenId = {:?}] Signing bundle tx with {:?} Wei (max-priority-fee: {:?}, max-total-fee: {:?}, gas-limit: {:?})",
+//                 id,
+//                 tx.value.unwrap_or_default(),
+//                 tx.max_priority_fee_per_gas.unwrap_or_default(),
+//                 tx.max_fee_per_gas.unwrap_or_default(),
+//                 tx.gas.unwrap_or_default(),
+//             );
+//         } else {
+//             println!(
+//                 "Signing bribe tx with {:?} Wei (max-priority-fee: {:?}, max-total-fee: {:?}, gas-limit: {:?})",
+//                 tx.value.unwrap_or_default(),
+//                 tx.max_priority_fee_per_gas.unwrap_or_default(),
+//                 tx.max_fee_per_gas.unwrap_or_default(),
+//                 tx.gas.unwrap_or_default(),
+//             );
+//         }
 
-        sum += tx.value.unwrap_or_default();
+//         sum += tx.value.unwrap_or_default();
 
-        let tx = tx.clone().into();
-        let signature = provider.signer().sign_transaction(&tx).await?;
-        let chain_id = provider.signer().chain_id();
-        let rlp = tx.rlp_signed(chain_id, &signature);
-        bundle = bundle.push_transaction(rlp);
-    }
-    println!("Total Wei required: {:?}", sum);
-    Ok(bundle)
-}
+//         let tx = tx.clone().into();
+//         let signature = provider.signer().sign_transaction(&tx).await?;
+//         let chain_id = provider.signer().chain_id();
+//         let rlp = tx.rlp_signed(chain_id, &signature);
+//         // bundle = bundle.push_transaction(rlp);
+//     }
+//     println!("Total Wei required: {:?}", sum);
+//     // Ok(bundle)
+//     todo!()
+// }
 
-/// Purchases a set of tokens
-pub async fn buy(opts: BuyOpts) -> color_eyre::Result<()> {
-    // connect to the chain
-    let provider = opts.eth.provider()?;
-    let chain_id = provider.get_chainid().await?.as_u64();
+// // Purchases a set of tokens
+// pub async fn buy(opts: BuyOpts) -> color_eyre::Result<()> {
+//     // connect to the chain
+//     let provider = opts.eth.provider()?;
+//     let chain_id = provider.get_chainid().await?.as_u64();
 
-    // read-only connection to the nft
-    let nft = NFT::new(opts.nft.address, provider.clone());
+//     // read-only connection to the nft
+//     let nft = NFT::new(opts.nft.address, provider.clone());
 
-    // configure the signer's chain id
-    let signer = opts.eth.signer()?.with_chain_id(chain_id);
-    let taker = signer.address();
+//     // configure the signer's chain id
+//     let signer = opts.eth.signer()?.with_chain_id(chain_id);
+//     let taker = signer.address();
 
-    println!("Sending txs from {:?}", taker);
-    println!("Balance: {:?}", provider.get_balance(taker, None).await?);
+//     println!("Sending txs from {:?}", taker);
+//     println!("Balance: {:?}", provider.get_balance(taker, None).await?);
 
-    // set up the args
-    let block = provider.get_block(BlockNumber::Latest).await?.unwrap();
-    let timestamp = block.timestamp.as_u64();
+//     // set up the args
+//     let block = provider.get_block(BlockNumber::Latest).await?.unwrap();
+//     let timestamp = block.timestamp.as_u64();
 
-    let args = BuyArgs {
-        token_id: 0.into(),
-        taker,
-        token: opts.nft.address,
-        recipient: taker,
-        timestamp: Some(timestamp - 100),
-    };
+//     let args = BuyArgs {
+//         token_id: 0.into(),
+//         taker,
+//         token: opts.nft.address,
+//         recipient: taker,
+//         timestamp: Some(timestamp - 100),
+//     };
 
-    // get the max basefee 5 blocks in the future, just in case
-    let base_fee = block.base_fee_per_gas.expect("No basefee found");
-    println!("Current base fee {:?}", base_fee);
-    let mut max_base_fee = base_fee;
-    for _ in 0..5 {
-        max_base_fee *= 1125;
-        max_base_fee /= 1000;
-    }
-    println!("Max base fee {:?}", max_base_fee);
+//     // get the max basefee 5 blocks in the future, just in case
+//     let base_fee = block.base_fee_per_gas.expect("No basefee found");
+//     println!("Current base fee {:?}", base_fee);
+//     let mut max_base_fee = base_fee;
+//     for _ in 0..5 {
+//         max_base_fee *= 1125;
+//         max_base_fee /= 1000;
+//     }
+//     println!("Max base fee {:?}", max_base_fee);
 
-    // read the token ids
-    let (ids, quantities) = opts.nft.tokens()?;
-    println!("Ids: {:?}", ids);
-    println!("Quantities: {:?}", quantities);
+//     // read the token ids
+//     let (ids, quantities) = opts.nft.tokens()?;
+//     println!("Ids: {:?}", ids);
+//     println!("Quantities: {:?}", quantities);
 
-    let opensea = Client::new(provider.clone(), OpenSeaApiConfig::default());
+//     let opensea = Client::new(provider.clone(), OpenSeaApiConfig::default());
 
-    // 1. construct the transactions w/ pre-calculated nonces
+//     // 1. construct the transactions w/ pre-calculated nonces
 
-    let (txs, next_nonce) =
-        create_transactions(&opensea, &ids, &quantities, max_base_fee, taker, &args).await?;
+//     let (txs, next_nonce) =
+//         create_transactions(&opensea, &ids, &quantities, max_base_fee, taker, &args).await?;
 
-    println!("Querying current owners...");
-    nft.log(&ids, args.recipient, opts.nft.erc1155).await?;
+//     println!("Querying current owners...");
+//     nft.log(&ids, args.recipient, opts.nft.erc1155).await?;
 
-    if let Some(bribe) = opts.flashbots.bribe {
-        println!(
-            "Using Flashbots. Bribe {:?}. Bribe Receiver {:?}",
-            bribe, opts.flashbots.bribe_receiver
-        );
+//     if let Some(bribe) = opts.flashbots.bribe {
+//         println!(
+//             "Using Flashbots. Bribe {:?}. Bribe Receiver {:?}",
+//             bribe, opts.flashbots.bribe_receiver
+//         );
 
-        // Add signer and Flashbots middleware. The signer middleware MUST be
-        // inside the Flashbots Middleware, as shown in the docs:
-        // https://github.com/onbjerg/ethers-flashbots/blob/4a4e7a52b27122aedded6cd770545aefe06683f1/examples/advanced.rs#L19-L26
-        let bundle_signer = LocalWallet::new(&mut ethers::core::rand::thread_rng());
-        let provider = FlashbotsMiddleware::new(
-            provider,
-            url::Url::parse("https://relay.flashbots.net")?,
-            bundle_signer,
-        );
-        let provider = SignerMiddleware::new(provider, signer);
-        let provider = Arc::new(provider);
+//         // Add signer and Flashbots middleware. The signer middleware MUST be
+//         // inside the Flashbots Middleware, as shown in the docs:
+//         // https://github.com/onbjerg/ethers-flashbots/blob/4a4e7a52b27122aedded6cd770545aefe06683f1/examples/advanced.rs#L19-L26
+//         let bundle_signer = LocalWallet::new(&mut ethers::core::rand::thread_rng());
+//         let provider = FlashbotsMiddleware::new(
+//             provider,
+//             url::Url::parse("https://relay.flashbots.net")?,
+//             bundle_signer,
+//         );
+//         let provider = SignerMiddleware::new(provider, signer);
+//         let provider = Arc::new(provider);
 
-        // if an address is explicitly specified to receive the bribe, add an extra
-        // tx to the bundle, if not, spread the tx fee evenly across all txs' fee field
-        let mut txs = txs;
-        match opts.flashbots.bribe_receiver {
-            Some(bribe_receiver) => {
-                println!(
-                    "Adding bribe tx to the bundle. Bribe Receiver {:?}, Amount: {:?}",
-                    bribe_receiver, bribe
-                );
+//         // if an address is explicitly specified to receive the bribe, add an extra
+//         // tx to the bundle, if not, spread the tx fee evenly across all txs' fee field
+//         let mut txs = txs;
+//         match opts.flashbots.bribe_receiver {
+//             Some(bribe_receiver) => {
+//                 println!(
+//                     "Adding bribe tx to the bundle. Bribe Receiver {:?}, Amount: {:?}",
+//                     bribe_receiver, bribe
+//                 );
 
-                // Construct the bribe transaction
-                let mut tx = Eip1559TransactionRequest::new()
-                    .to(bribe_receiver)
-                    // TODO: Can we remove this?
-                    .gas(200_000)
-                    .max_fee_per_gas(max_base_fee)
-                    // use the bumped nonce
-                    .nonce(next_nonce)
-                    .value(bribe);
+//                 // Construct the bribe transaction
+//                 let mut tx = Eip1559TransactionRequest::new()
+//                     .to(bribe_receiver)
+//                     // TODO: Can we remove this?
+//                     .gas(200_000)
+//                     .max_fee_per_gas(max_base_fee)
+//                     // use the bumped nonce
+//                     .nonce(next_nonce)
+//                     .value(bribe);
 
-                // briber.sol has a different method call depending on erc1155 or 721s
-                // being sniped
-                let briber = Briber::new(bribe_receiver, provider.clone());
-                if opts.nft.erc1155 {
-                    tx.data = briber
-                        .verify_ownership_and_pay_1155(
-                            args.token,
-                            args.recipient,
-                            ids.clone(),
-                            quantities.iter().cloned().map(Into::into).collect(),
-                        )
-                        .calldata();
-                } else {
-                    tx.data = briber
-                        .verify_ownership_and_pay_721(args.token, args.recipient, ids.clone())
-                        .calldata();
-                };
+//                 // briber.sol has a different method call depending on erc1155 or 721s
+//                 // being sniped
+//                 let briber = Briber::new(bribe_receiver, provider.clone());
+//                 if opts.nft.erc1155 {
+//                     tx.data = briber
+//                         .verify_ownership_and_pay_1155(
+//                             args.token,
+//                             args.recipient,
+//                             ids.clone(),
+//                             quantities.iter().cloned().map(Into::into).collect(),
+//                         )
+//                         .calldata();
+//                 } else {
+//                     tx.data = briber
+//                         .verify_ownership_and_pay_721(args.token, args.recipient, ids.clone())
+//                         .calldata();
+//                 };
 
-                txs.push(tx);
-            }
-            None => {
-                let priority_fee_per_tx = bribe / opts.nft.ids.len();
-                println!(
-                    "Splitting bribe across {:?} txs in the bundle. Amount per tx: {:?}",
-                    opts.nft.ids.len(),
-                    priority_fee_per_tx
-                );
+//                 txs.push(tx);
+//             }
+//             None => {
+//                 let priority_fee_per_tx = bribe / opts.nft.ids.len();
+//                 println!(
+//                     "Splitting bribe across {:?} txs in the bundle. Amount per tx: {:?}",
+//                     opts.nft.ids.len(),
+//                     priority_fee_per_tx
+//                 );
 
-                txs.iter_mut().for_each(|tx| {
-                    // bump the max base fee by the priority fee
-                    if let Some(ref mut max_fee_per_gas) = tx.max_fee_per_gas {
-                        *max_fee_per_gas += priority_fee_per_tx;
-                    }
-                    tx.max_priority_fee_per_gas = Some(priority_fee_per_tx);
-                })
-            }
-        };
+//                 txs.iter_mut().for_each(|tx| {
+//                     // bump the max base fee by the priority fee
+//                     if let Some(ref mut max_fee_per_gas) = tx.max_fee_per_gas {
+//                         *max_fee_per_gas += priority_fee_per_tx;
+//                     }
+//                     tx.max_priority_fee_per_gas = Some(priority_fee_per_tx);
+//                 })
+//             }
+//         };
 
-        let bundle = sign_bundle(provider.clone(), &txs, &ids).await?;
+//         let bundle = sign_bundle(provider.clone(), &txs, &ids).await?;
 
-        if opts.dry_run {
-            return Ok(());
-        }
+//         if opts.dry_run {
+//             return Ok(());
+//         }
 
-        // set the block bundle
-        let num = provider.get_block_number().await?;
-        let bundle = bundle.set_block(num + 5).set_simulation_block(num);
-        println!(
-            "Current block {:?}. Waiting for bundle until block {:?}",
-            num,
-            num + 5
-        );
+//         // set the block bundle
+//         let num = provider.get_block_number().await?;
+//         let bundle = bundle.set_block(num + 5).set_simulation_block(num);
+//         println!(
+//             "Current block {:?}. Waiting for bundle until block {:?}",
+//             num,
+//             num + 5
+//         );
 
-        // 4. Send it!
-        println!("Simulating bundle");
-        let simulated_bundle = provider.inner().simulate_bundle(&bundle).await?;
-        println!("Simulated bundle: {:?}", simulated_bundle);
-        let pending_bundle = provider.inner().send_bundle(&bundle).await?;
-        let res = pending_bundle.await?;
-        println!("Bundle executed: {:?}", res);
-    } else {
-        let provider = SignerMiddleware::new(provider, signer);
-        let provider = Arc::new(provider);
+//         // 4. Send it!
+//         println!("Simulating bundle");
+//         let simulated_bundle = provider.inner().simulate_bundle(&bundle).await?;
+//         println!("Simulated bundle: {:?}", simulated_bundle);
+//         let pending_bundle = provider.inner().send_bundle(&bundle).await?;
+//         let res = pending_bundle.await?;
+//         println!("Bundle executed: {:?}", res);
+//     } else {
+//         let provider = SignerMiddleware::new(provider, signer);
+//         let provider = Arc::new(provider);
 
-        for (tx, id) in txs.into_iter().zip(&ids) {
-            let tx: TransactionRequest = tx.into();
+//         for (tx, id) in txs.into_iter().zip(&ids) {
+//             let tx: TransactionRequest = tx.into();
 
-            if opts.dry_run {
-                return Ok(());
-            }
+//             if opts.dry_run {
+//                 return Ok(());
+//             }
 
-            println!(
-                "[Token Id = {:?}] Sending tx with {:?} Wei ",
-                id,
-                tx.value.unwrap()
-            );
-            let pending_tx = provider.send_transaction(tx, None).await?;
-            println!("[Token Id = {:?}] Sent tx {:?}", id, *pending_tx);
-        }
-    }
+//             println!(
+//                 "[Token Id = {:?}] Sending tx with {:?} Wei ",
+//                 id,
+//                 tx.value.unwrap()
+//             );
+//             let pending_tx = provider.send_transaction(tx, None).await?;
+//             println!("[Token Id = {:?}] Sent tx {:?}", id, *pending_tx);
+//         }
+//     }
 
-    println!("== Ownership after ==");
-    nft.log(&ids, args.recipient, opts.nft.erc1155).await?;
+//     println!("== Ownership after ==");
+//     nft.log(&ids, args.recipient, opts.nft.erc1155).await?;
 
-    Ok(())
-}
+//     Ok(())
+// }

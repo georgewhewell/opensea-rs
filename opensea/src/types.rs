@@ -3,7 +3,7 @@ use chrono::NaiveDateTime;
 use eth_encode_packed::{abi::encode_packed, SolidityDataType, TakeLastXBytes};
 use ethers::{
     core::utils::id,
-    prelude::{LocalWallet, Signer, rand::thread_rng},
+    prelude::{LocalWallet, Signer, rand::thread_rng, SignerMiddleware},
     types::{Address, Bytes, H256, U256},
     utils::keccak256,
 };
@@ -140,9 +140,9 @@ fn u256_to_h256(u256: U256) -> H256 {
 }
 
 impl UnsignedOrder {
-    fn sign_order(self, signer: &LocalWallet) -> MinimalOrder {
+    async fn sign_order(self, signer: impl Signer) -> MinimalOrder {
         let order_hash = self.calculate_hash();
-        let sig = signer.sign_hash(order_hash, false);
+        let sig = signer.sign_message(&order_hash).await.unwrap();
         MinimalOrder {
             exchange: self.exchange,
             maker: self.maker,
@@ -486,15 +486,15 @@ impl Order {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Metadata {
-    asset: AssetId,
-    schema: String,
+    pub asset: AssetId,
+    pub schema: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AssetId {
     #[serde(deserialize_with = "u256_from_dec_str")]
-    id: U256,
-    address: Address,
+    pub id: U256,
+    pub address: Address,
 }
 
 use serde::de;
@@ -537,20 +537,11 @@ pub enum OrderSide {
     Sell,
 }
 
-pub fn create_maker_order(maker: &LocalWallet) -> Order {
+pub async fn create_maker_order<S: Signer>(maker: &Address, metadata: Metadata, signer: S) -> Order {
     // make buy order
-    let metadata = Metadata {
-        asset: AssetId {
-            id: 5250.into(),
-            address: "0x521f9c7505005cfa19a8e5786a9c3c9c9f5e6f42"
-                .parse()
-                .unwrap(),
-        },
-        schema: "ERC721".into(),
-    };
-    let unsigned = UnsignedOrder::from_metadata(maker.address(), &metadata);
+    let unsigned = UnsignedOrder::from_metadata(maker.clone(), &metadata);
     let order_hash = unsigned.calculate_hash();
-    let signed = unsigned.sign_order(maker);
+    let signed = unsigned.sign_order(signer).await;
 
     Order {
         quantity: 1.into(),
@@ -594,28 +585,47 @@ pub fn create_maker_order(maker: &LocalWallet) -> Order {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::TryFrom;
+    use std::sync::Arc;
+
+    use ethers::prelude::{Provider, Middleware};
     use ethers::prelude::rand::thread_rng;
     use ethers::signers::Signer;
 
+    use crate::Client;
+    use crate::api::OpenSeaApiConfig;
+
     use super::*;
 
-    #[test]
-    fn roundtrip_order() {
-        let wallet = LocalWallet::new(&mut thread_rng());
-        let sell = create_maker_order(&wallet);
+    // #[tokio::test]
+    // async fn test_roundtrip_order() {
+    //     let provider = Provider::try_from("http://localhost:18545").unwrap();
+    //     let provider = Arc::new(provider);
 
-        let buyArgs = BuyArgs {
-            taker: wallet.address(),
-            recipient: wallet.address(),
-            token: Address::default(),
-            token_id: 1.into(),
-            timestamp: 0.into(),
-        };
-        let buy = sell.match_sell(buyArgs);
+    //     let accounts = provider.get_accounts().await.unwrap()[0];
 
-        // construct matching sell
-        // let order = Order::from(signed);
-    }
+    //     let sell = create_maker_order(&wallet);
+    //     let sell_minimal = MinimalOrder::from(sell.clone());
+
+    //     let buyArgs = BuyArgs {
+    //         taker: wallet.address(),
+    //         recipient: wallet.address(),
+    //         token: Address::default(),
+    //         token_id: 1.into(),
+    //         timestamp: 0.into(),
+    //     };
+    //     let buy = sell.match_sell(buyArgs);
+
+    //     let config = OpenSeaApiConfig::default();
+
+    //     let client = Client::new(provider.clone(), OpenSeaApiConfig::with_api_key(""));
+
+    //     let call = client.atomic_match(buy, sell_minimal).await.unwrap();
+
+    //     let a = call.send().await.unwrap().await.unwrap();
+    //             // construct matching sell
+    //     // let order = Order::from(buy);
+    // }
 
     #[test]
     fn deser_order() {

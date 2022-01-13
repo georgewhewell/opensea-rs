@@ -154,7 +154,7 @@ impl<M: Middleware> Client<M> {
         // them wrongly, so we need to convert them to u256
         // to work :shrug:
         let methods = [
-            buy.fee_method,
+            U256::from(buy.fee_method),
             buy.side.into(),
             buy.sale_kind.into(),
             buy.how_to_call.into(),
@@ -163,7 +163,7 @@ impl<M: Middleware> Client<M> {
             sell.sale_kind.into(),
             sell.how_to_call.into(),
         ];
-        let vs: [u8; 2] = [0, sell.v];
+        let vs: [U256; 2] = [0.into(), sell.v.into()];
 
         // TODO: This should be [H256; 5] in Abigen
         let rss_metadata = [[0; 32], [0; 32], sell.r.0, sell.s.0, [0; 32]];
@@ -173,7 +173,8 @@ impl<M: Middleware> Client<M> {
             .contracts
             // Abigen error, doesn't generate a correct signature for function with underscore
             // in its name
-            .atomic_match(
+            .method("atomicMatch_", 
+                (
                 addrs,
                 uints,
                 methods,
@@ -185,13 +186,16 @@ impl<M: Middleware> Client<M> {
                 sell.static_extradata,
                 vs,
                 rss_metadata,
-            );
+            )
+            
+        ).unwrap();
 
         // set the value
         let call = call.value(buy.base_price);
 
         // set the gas
-        let gas = call.estimate_gas().await.expect("could not estimate gas");
+        // let gas = call.estimate_gas().await.expect("could not estimate gas");
+
         // TODO: Why does gas estimation not work?
         let call = call.gas(300_000);
 
@@ -205,30 +209,36 @@ impl<M: Middleware> Client<M> {
 mod tests {
     use std::{convert::TryFrom, sync::Arc};
 
-    use ethers::{prelude::BlockNumber, providers::Provider, types::Address, utils::parse_units};
+    use ethers::{prelude::{BlockNumber, SignerMiddleware, LocalWallet, Signer}, providers::Provider, types::Address, utils::parse_units};
 
     use super::*;
-    use crate::api::OpenSeaApiConfig;
+    use crate::{api::OpenSeaApiConfig, types::{create_maker_order, AssetId, Metadata}, constants::OPENSEA_ADDRESS};
 
     ethers::contract::abigen!(
         NFT,
         r#"[
         function ownerOf(uint256) view returns (address)
         function balanceOf(address,uint256) view returns (uint256)
+        function approve(address to, uint256 tokenId) public virtual override
     ]"#
     );
 
     #[tokio::test]
     // #[ignore]
     async fn can_buy_an_nft() {
-        let provider = Provider::try_from("http://localhost:8889").unwrap();
+        let wallet: LocalWallet = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
+        let wallet = wallet.with_chain_id(31337u32);
+
+        let provider = Provider::try_from("http://localhost:18545").unwrap();
+        let provider = SignerMiddleware::new(provider, wallet.clone());
         let provider = Arc::new(provider);
 
-        let accounts = provider.get_accounts().await.unwrap();
-        let taker = accounts[0].clone();
-        let id = 6508.into();
-
-        let address = "0x91f7bb6900d65d004a659f34205beafc3b4e136c"
+        let taker = wallet.address();
+        // let accounts = provider.get_accounts().await.unwrap();
+        // let taker = accounts[0].clone();
+        let id = 8004.into();
+        
+        let address = "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d"
             .parse::<Address>()
             .unwrap();
         let nft = NFT::new(address, provider.clone());
@@ -254,20 +264,52 @@ mod tests {
 
         // execute the call
         let call = client.buy(args, 1).await.unwrap()[0].clone();
-        let call = call.gas_price(parse_units(100, 9).unwrap());
+        let call = call.gas_price(parse_units(500, 9).unwrap());
         let sent = call.send().await.unwrap();
 
         // wait for it to be confirmed
         let _receipt = sent.await.unwrap();
+
         // check the owner matches
         let owner = nft.owner_of(id).call().await.unwrap();
         assert_eq!(owner, taker);
+
+        // WE HAVE THE APE
+
+        // approve transfer to opensea
+        nft.approve(*OPENSEA_ADDRESS, id).from(taker.clone()).send().await.unwrap().await.unwrap();
+
+        // make a sell order for it...
+        let metadata = Metadata {
+            asset: AssetId {
+                id: id.into(),
+                address: address.clone(),
+            },
+            schema: "ERC721".into(),
+        };
+
+        let sell = create_maker_order(&taker, metadata, wallet).await;
+
+        let wallet_buyer: LocalWallet = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+        let args = BuyArgs {
+            taker: wallet_buyer.address(),
+            recipient: wallet_buyer.address(),
+            token: address,
+            token_id: id,
+            timestamp: None,
+        };
+        let buy = sell.match_sell(args);
+        let sell = MinimalOrder::from(sell);
+        let call = client.atomic_match(buy, sell).await.unwrap();
+        let call = call.gas_price(parse_units(500, 9).unwrap());
+        let result = call.from(wallet_buyer.address()).send().await.unwrap().await.unwrap();
+        todo!()
     }
 
     #[tokio::test]
     // #[ignore]
     async fn can_buy_an_erc1155() {
-        let provider = Provider::try_from("http://localhost:8889").unwrap();
+        let provider = Provider::try_from("http://localhost:18545").unwrap();
         let provider = Arc::new(provider);
 
         let accounts = provider.get_accounts().await.unwrap();
