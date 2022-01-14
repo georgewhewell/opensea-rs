@@ -22,6 +22,8 @@ use std::sync::Arc;
 use thiserror::Error;
 use types::MinimalOrder;
 
+use crate::types::UnsignedOrder;
+
 pub async fn get_n_cheapest_orders(
     api: &OpenSeaApi,
     contract_address: Address,
@@ -66,9 +68,14 @@ pub enum ClientError {
 
 impl<M: Middleware> Client<M> {
     pub fn new(provider: Arc<M>, cfg: OpenSeaApiConfig) -> Self {
+        let address = match cfg.network {
+            types::Network::Mainnet => *constants::OPENSEA_ADDRESS,
+            types::Network::Rinkeby => *constants::OPENSEA_ADDRESS_RINKEBY,
+        };
+        println!("opensea address is {:?}", &address);
         Self {
             api: OpenSeaApi::new(cfg),
-            contracts: OpenSea::new(*constants::OPENSEA_ADDRESS, provider),
+            contracts: OpenSea::new(address, provider),
         }
     }
 
@@ -89,10 +96,14 @@ impl<M: Middleware> Client<M> {
                 "[Token Id = {:?}] Maker: {:?}",
                 args.token_id, sell.maker.address,
             );
-
+            let real_hash = sell.order_hash;
+            // let unsign = UnsignedOrder::from(&sell);
             // make its corresponding buy
             let buy = sell.match_sell(args.clone());
             let sell = MinimalOrder::from(sell);
+            let sell_hash = sell.calculate_hash();
+            assert_eq!(real_hash, sell_hash);
+            println!("HASH IS CORRECT!!");
             let call = self.atomic_match(buy, sell).await?;
             calls.push(call);
         }
@@ -201,7 +212,7 @@ impl<M: Middleware> Client<M> {
         // let gas = call.estimate_gas().await.expect("could not estimate gas");
 
         // TODO: Why does gas estimation not work?
-        let call = call.gas(300_000);
+        let call = call.gas(1_000_000);
 
         Ok(call)
     }
@@ -216,7 +227,7 @@ mod tests {
     use ethers::{prelude::{BlockNumber, SignerMiddleware, LocalWallet, Signer}, providers::Provider, types::Address, utils::parse_units};
 
     use super::*;
-    use crate::{api::OpenSeaApiConfig, types::{create_maker_order, AssetId, Metadata}, constants::OPENSEA_ADDRESS};
+    use crate::{api::OpenSeaApiConfig, types::{create_maker_order, AssetId, Metadata}, constants::{OPENSEA_ADDRESS, OPENSEA_ADDRESS_RINKEBY}};
 
     ethers::contract::abigen!(
         NFT,
@@ -230,18 +241,17 @@ mod tests {
     #[tokio::test]
     // #[ignore]
     async fn can_buy_an_nft() {
-        let wallet: LocalWallet = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
-        let wallet = wallet.with_chain_id(1u32);
-
-        let provider = Provider::try_from("http://localhost:18545").unwrap();
+        let wallet: LocalWallet = "57b2de6d5ec9062543df654091f0165b947fefb39e18b206f9ca4d4b6c502fe5".parse().unwrap();
+        let wallet = wallet.with_chain_id(4u32);
+        let provider = Provider::try_from("http://localhost:8575").unwrap();
         let provider = provider.interval(Duration::from_millis(100));
         let provider = SignerMiddleware::new(provider, wallet.clone());
         let provider = Arc::new(provider);
 
         let taker = wallet.address();
-        let id = 8005.into();
+        let id = 7.into();
         
-        let address = "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d"
+        let address = "0x8e04b806a89550332b9ee8f28cdffb72e60ef606"
             .parse::<Address>()
             .unwrap();
         let nft = NFT::new(address, provider.clone());
@@ -252,36 +262,39 @@ mod tests {
             .unwrap()
             .unwrap();
         let timestamp = block.timestamp.as_u64();
-
+        
         // set up the args
-        let args = BuyArgs {
-            token_id: id,
-            taker,
-            token: address,
-            recipient: taker,
-            timestamp: Some(timestamp - 100),
-        };
+        // let args = BuyArgs {
+        //     token_id: 8589937919u64.into(),
+        //     taker,
+        //     token: "0x31776d1fde9595d4acd4d8415e4e6aac6f0a85ff".parse().unwrap(),
+        //     recipient: taker,
+        //     timestamp: Some(timestamp - 100),
+        // };
 
         // instantiate the client
         let client = Client::new(provider.clone(), OpenSeaApiConfig::with_api_key(""));
 
         // execute the call
-        let call = client.buy(args, 1).await.unwrap()[0].clone();
-        let call = call.gas_price(parse_units(500, 9).unwrap());
-        let sent = call.send().await.unwrap();
+        // let call = client.buy(args, 1).await.unwrap()[0].clone();
+        // let call = call.gas(1_000_000).gas_price(parse_units(500, 9).unwrap());
+        // let call = call.from(taker.clone());
+        // println!("contractcall: {:#?}", &call);
+        // panic!("done");
+        // let sent = call.send().await.unwrap();
 
-        // wait for it to be confirmed
-        let _receipt = sent.await.unwrap();
+        // // wait for it to be confirmed
+        // let _receipt = sent.await.unwrap();
 
         // check the owner matches
         let owner = nft.owner_of(id).call().await.unwrap();
         assert_eq!(owner, taker);
-
+        
         // WE HAVE THE APE
 
         // approve transfer to opensea
-        nft.approve(*OPENSEA_ADDRESS, id).from(taker.clone()).send().await.unwrap().await.unwrap();
-
+        // nft.approve(*OPENSEA_ADDRESS_RINKEBY, id).from(taker.clone()).send().await.unwrap().await.unwrap();
+        println!("seller is {:?}", &taker);
         // make a sell order for it...
         let metadata = Metadata {
             asset: AssetId {
@@ -293,7 +306,15 @@ mod tests {
 
         let sell = create_maker_order(&taker, metadata, wallet).await;
 
-        let wallet_buyer: LocalWallet = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+        let wallet_buyer: LocalWallet = "dc1235467601950f136c9ebde5478dde864851fd058ceed04cea93fae9e9b555".parse().unwrap();
+        let wallet_buyer = wallet_buyer.with_chain_id(4u32);
+        println!("buyer is {:?}", wallet_buyer.address());
+        let provider = Provider::try_from("http://localhost:8575").unwrap();
+        let provider = provider.interval(Duration::from_millis(100));
+        let provider = SignerMiddleware::new(provider, wallet_buyer.clone());
+        let provider = Arc::new(provider);
+        let client = Client::new(provider.clone(), OpenSeaApiConfig::with_api_key(""));
+
         let block = provider
             .get_block(BlockNumber::Latest)
             .await
@@ -312,9 +333,11 @@ mod tests {
         let call = client.atomic_match(buy, sell).await.unwrap();
         let call = call.gas_price(parse_units(500, 9).unwrap());
         let result = call.from(wallet_buyer.address()).send().await.unwrap().await.unwrap();
-        todo!()
-    }
 
+        let owner = nft.owner_of(id).call().await.unwrap();
+        assert_eq!(owner, wallet_buyer.address());
+    }
+    
     #[tokio::test]
     // #[ignore]
     async fn can_buy_an_erc1155() {

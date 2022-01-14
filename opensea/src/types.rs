@@ -5,7 +5,7 @@ use ethers::{
     core::utils::id,
     prelude::{LocalWallet, Signer, rand::thread_rng, SignerMiddleware},
     types::{Address, Bytes, H256, U256},
-    utils::keccak256,
+    utils::{keccak256, hash_message},
 };
 use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
@@ -124,6 +124,41 @@ pub struct MinimalOrder {
     pub s: H256,
 }
 
+impl MinimalOrder {
+    pub fn calculate_hash(&self) -> H256 {
+        let calldata_bytes = self.calldata.to_vec();
+        let replacement_pattern_bytes = self.replacement_pattern.to_vec();
+        let static_extradata_bytes = self.static_extradata.to_vec();
+        let parts = vec![
+            SolidityDataType::Address(self.exchange),
+            SolidityDataType::Address(self.maker),
+            SolidityDataType::Address(self.taker),
+            SolidityDataType::Number(self.maker_relayer_fee),
+            SolidityDataType::Number(self.taker_relayer_fee),
+            SolidityDataType::Number(self.maker_protocol_fee),
+            SolidityDataType::Number(self.taker_protocol_fee),
+            SolidityDataType::Address(self.fee_recipient),
+            SolidityDataType::NumberWithShift(self.fee_method.into(), TakeLastXBytes(8)),
+            SolidityDataType::NumberWithShift(self.side.into(), TakeLastXBytes(8)),
+            SolidityDataType::NumberWithShift(self.sale_kind.into(), TakeLastXBytes(8)),
+            SolidityDataType::Address(self.target),
+            SolidityDataType::NumberWithShift(self.how_to_call.into(), TakeLastXBytes(8)),
+            SolidityDataType::Bytes(&calldata_bytes),
+            SolidityDataType::Bytes(&replacement_pattern_bytes),
+            SolidityDataType::Address(self.static_target),
+            SolidityDataType::Bytes(&static_extradata_bytes),
+            SolidityDataType::Address(self.payment_token),
+            SolidityDataType::Number(self.base_price),
+            SolidityDataType::Number(self.extra),
+            SolidityDataType::Number(self.listing_time.into()),
+            SolidityDataType::Number(self.expiration_time.into()),
+            SolidityDataType::Number(self.salt),
+        ];
+        let (packed, _hex) = encode_packed(&parts);
+        keccak256(&packed).into()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct BidArgs {
     pub taker: Address,
@@ -140,18 +175,36 @@ fn u256_to_h256(u256: U256) -> H256 {
     // H256::from_str(&as_hex).unwrap()
     H256::from_slice(&buf)
 }
+const PREFIX: &str = "\x19Ethereum Signed Message:\n32";
 
 impl UnsignedOrder {
     async fn sign_order(self, signer: impl Signer) -> MinimalOrder {
         let order_hash = self.calculate_hash();
+        println!("order hash: {:?}", &order_hash);
+        let mut msg = String::from("\x19Ethereum Signed Message:\n32").as_bytes().to_vec();
+        msg.extend_from_slice(order_hash.as_bytes());
 
-        let msg = format!("0x{}", hex::encode(keccak256(order_hash)));
+        let hash_to_sign = keccak256(&msg);
+        
+        // let hash_to_sign = keccak256(format!("\x19Ethereum Signed Message:\n32", order_hash.as_bytes()));
+        println!("hash to sign: {:?}", hex::encode(&hash_to_sign));
+
+        // signer.
+        // let encc = format!("0x{}", hex::encode(&order_hash));
+
+        // let eth_message = format!("{}{}", PREFIX, hex::encode(&order_hash)).into_bytes();
+        // eth_message.extend_from_slice(message);
+    
+        // let msg = format!("0x{}", hex::encode(keccak256(&eth_message)));
+        // println!("hash: {}", &msg);
+        // let hashed = hash_message(order_hash);
+        // let msg = format!("0x{}", hex::encode(keccak256(order_hash)));
         // let sig = signer.sign_message(msg).await?;
-    //     Ok(sig)
+        // Ok(sig)
         // println!("order hash: {:?}", &order_hash);
         // let encoded = hex::encode(order_hash.as_bytes());
         // println!("encoded: {:?}", encoded);
-        let sig = signer.sign_message(&msg).await.unwrap();
+        let sig = signer.sign_message(order_hash.as_bytes()).await.unwrap();
         println!("signature is: {}", &sig);
         println!("v: {}", &sig.v);
         // let r_as_hex = hex::encode(u256)
@@ -225,7 +278,7 @@ impl UnsignedOrder {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let expiry = now + 3600;
+        let expiry = now + 3600 + 3600;
 
         let schema = &metadata.schema;
         let (calldata, pattern) = match schema.as_str() {
@@ -263,23 +316,23 @@ impl UnsignedOrder {
         };
 
         Self {
-            exchange: constants::OPENSEA_ADDRESS.clone(),
+            exchange: constants::OPENSEA_ADDRESS_RINKEBY.clone(),
             maker: maker,
             taker: Address::zero(),
-            fee_recipient: constants::OPENSEA_FEE_RECIPIENT.clone(),
+            fee_recipient: constants::OPENSEA_FEE_RECIPIENT_RINKEBY.clone(),
             target: metadata.asset.address,
             payment_token: Address::zero(),
             maker_relayer_fee: 500.into(),
             taker_relayer_fee: 0.into(),
             maker_protocol_fee: 0.into(),
             taker_protocol_fee: 0.into(),
-            base_price: U256::from_dec_str("77770000000000000000").unwrap(),
+            base_price: U256::from_dec_str("70000000000000000").unwrap(),
             extra: 0.into(),
-            listing_time: 1642080767.into(),
-            expiration_time: 1642340027.into(),
+            listing_time: (now - 3600).into(),
+            expiration_time: 0.into(),
             salt: ethers::core::rand::random::<u64>().into(),
-            fee_method: 1.into(),
-            side: 0.into(),
+            fee_method: 0.into(),
+            side: 1.into(),
             sale_kind: 0.into(),
             how_to_call: 0.into(),
             calldata: calldata,
@@ -456,10 +509,10 @@ impl Order {
         order.salt = ethers::core::rand::random::<u64>().into();
         order.fee_recipient = Address::zero(); // *constants::OPENSEA_FEE_RECIPIENT;
         
-        order.maker_relayer_fee = 0.into();
-        order.taker_relayer_fee = 0.into();
-        order.maker_protocol_fee = 0.into();
-        order.taker_protocol_fee = 0.into();
+        // order.maker_relayer_fee = 0.into();
+        // order.taker_relayer_fee = 0.into();
+        // order.maker_protocol_fee = 0.into();
+        // order.taker_protocol_fee = 0.into();
 
         let schema = &self.metadata.schema;
         let calldata = if schema == "ERC721" {
@@ -557,6 +610,7 @@ pub async fn create_maker_order<S: Signer>(maker: &Address, metadata: Metadata, 
     let order_hash = unsigned.calculate_hash();
     println!("order hash is: {:?}", order_hash);
     let signed = unsigned.sign_order(signer).await;
+    // println!("signed hash: {:?}", signed)
     Order {
         quantity: 1.into(),
         id: None,

@@ -19,8 +19,17 @@ pub static OPENSEA_FEE_RECIPIENT: Lazy<Address> = Lazy::new(|| {
         .unwrap()
 });
 
+pub static OPENSEA_FEE_RECIPIENT_RINKEBY: Lazy<Address> = Lazy::new(|| {
+    "0xa839d4b5a36265795eba6894651a8af3d0ae2e68".parse().unwrap()
+});
+
 pub static OPENSEA_ADDRESS: Lazy<Address> = Lazy::new(|| {
     "0x7be8076f4ea4a4ad08075c2508e481d6c946d12b"
+        .parse()
+        .unwrap()
+});
+pub static OPENSEA_ADDRESS_RINKEBY: Lazy<Address> = Lazy::new(|| {
+    "0x5206e78b21Ce315ce284FB24cf05e0585A93B1d9"
         .parse()
         .unwrap()
 });

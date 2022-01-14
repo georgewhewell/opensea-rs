@@ -127,7 +127,7 @@ impl OpenSeaApiConfig {
     pub fn with_api_key(api_key: &str) -> Self {
         Self {
             api_key: Some(api_key.to_owned()),
-            ..Default::default()
+            network: Network::Rinkeby,
         }
     }
 }
