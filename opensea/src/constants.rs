@@ -28,8 +28,15 @@ pub static OPENSEA_ADDRESS: Lazy<Address> = Lazy::new(|| {
         .parse()
         .unwrap()
 });
+
 pub static OPENSEA_ADDRESS_RINKEBY: Lazy<Address> = Lazy::new(|| {
     "0x5206e78b21Ce315ce284FB24cf05e0585A93B1d9"
+        .parse()
+        .unwrap()
+});
+
+pub static OPENSEA_PROXY_REGISTRY_RINKEBY: Lazy<Address> = Lazy::new(|| {
+    "0xf57b2c51ded3a29e6891aba85459d600256cf317"
         .parse()
         .unwrap()
 });

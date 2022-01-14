@@ -17,6 +17,7 @@ pub use api::{OpenSeaApi, OpenSeaApiError, OrderRequest};
 mod contracts;
 pub use contracts::OpenSea;
 pub use contracts::ERC721;
+pub use contracts::OpenseaProxyRegistry;
 
 use std::sync::Arc;
 use thiserror::Error;
@@ -203,7 +204,7 @@ impl<M: Middleware> Client<M> {
                 rss_metadata,
             )
             
-        ).unwrap();
+        ).unwrap().legacy();
 
         // set the value
         let call = call.value(buy.base_price);
@@ -227,7 +228,7 @@ mod tests {
     use ethers::{prelude::{BlockNumber, SignerMiddleware, LocalWallet, Signer}, providers::Provider, types::Address, utils::parse_units};
 
     use super::*;
-    use crate::{api::OpenSeaApiConfig, types::{create_maker_order, AssetId, Metadata}, constants::{OPENSEA_ADDRESS, OPENSEA_ADDRESS_RINKEBY}};
+    use crate::{api::OpenSeaApiConfig, types::{create_maker_order, AssetId, Metadata}, constants::{OPENSEA_ADDRESS, OPENSEA_ADDRESS_RINKEBY, OPENSEA_PROXY_REGISTRY_RINKEBY}};
 
     ethers::contract::abigen!(
         NFT,
@@ -235,6 +236,7 @@ mod tests {
         function ownerOf(uint256) view returns (address)
         function balanceOf(address,uint256) view returns (uint256)
         function approve(address to, uint256 tokenId) public virtual override
+        function setApprovalForAll(address to, bool approved) public
     ]"#
     );
 
@@ -292,8 +294,18 @@ mod tests {
         
         // WE HAVE THE APE
 
+        // create proxy (??)
+        // let prx = OpenseaProxyRegistry::new(*OPENSEA_PROXY_REGISTRY_RINKEBY, provider.clone());
+        // prx.register_proxy().send().await.unwrap().await.unwrap();
+
+        let proxy_address: Address = "0xb6a693947cfc4a0ad8ff41fc07079df118b5c3d5".parse().unwrap();
+
         // approve transfer to opensea
-        // nft.approve(*OPENSEA_ADDRESS_RINKEBY, id).from(taker.clone()).send().await.unwrap().await.unwrap();
+        nft.approve(proxy_address.clone(), id).from(taker.clone()).send().await.unwrap().await.unwrap();
+
+        // do i need to do this too??
+        nft.set_approval_for_all(proxy_address.clone(), true).from(taker.clone()).send().await.unwrap().await.unwrap();
+
         println!("seller is {:?}", &taker);
         // make a sell order for it...
         let metadata = Metadata {
@@ -332,7 +344,7 @@ mod tests {
         let sell = MinimalOrder::from(sell);
         let call = client.atomic_match(buy, sell).await.unwrap();
         let call = call.gas_price(parse_units(500, 9).unwrap());
-        let result = call.from(wallet_buyer.address()).send().await.unwrap().await.unwrap();
+        let result = call.from(wallet_buyer.address()).gas(1_000_000).send().await.unwrap().await.unwrap();
 
         let owner = nft.owner_of(id).call().await.unwrap();
         assert_eq!(owner, wallet_buyer.address());

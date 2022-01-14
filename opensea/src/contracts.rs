@@ -17,3 +17,11 @@ abigen!(
     ]"#,
     event_derives(serde::Deserialize, serde::Serialize)
 );
+
+abigen!(
+    OpenseaProxyRegistry,
+    r#"[
+        registerProxy() public returns (OwnableDelegateProxy proxy)
+    ]"#,
+    event_derives(serde::Deserialize, serde::Serialize)
+);

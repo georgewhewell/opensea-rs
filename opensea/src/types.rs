@@ -278,7 +278,7 @@ impl UnsignedOrder {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let expiry = now + 3600 + 3600;
+        let expiry = now + 3600;
 
         let schema = &metadata.schema;
         let (calldata, pattern) = match schema.as_str() {
@@ -331,7 +331,7 @@ impl UnsignedOrder {
             listing_time: (now - 3600).into(),
             expiration_time: 0.into(),
             salt: ethers::core::rand::random::<u64>().into(),
-            fee_method: 0.into(),
+            fee_method: 1.into(),
             side: 1.into(),
             sale_kind: 0.into(),
             how_to_call: 0.into(),
