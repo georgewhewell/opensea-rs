@@ -9,3 +9,11 @@ abigen!(
     ]"#,
     event_derives(serde::Deserialize, serde::Serialize)
 );
+
+abigen!(
+    ERC721,
+    r#"[
+        approve(address spender, uint256 amount) external returns (bool)
+    ]"#,
+    event_derives(serde::Deserialize, serde::Serialize)
+);

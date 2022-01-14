@@ -136,13 +136,27 @@ pub struct BidArgs {
 fn u256_to_h256(u256: U256) -> H256 {
     let mut buf = vec![0; 32];
     u256.to_big_endian(&mut buf);
+    // let as_hex = hex::encode(&buf);
+    // H256::from_str(&as_hex).unwrap()
     H256::from_slice(&buf)
 }
 
 impl UnsignedOrder {
     async fn sign_order(self, signer: impl Signer) -> MinimalOrder {
         let order_hash = self.calculate_hash();
-        let sig = signer.sign_message(&order_hash).await.unwrap();
+
+        let msg = format!("0x{}", hex::encode(keccak256(order_hash)));
+        // let sig = signer.sign_message(msg).await?;
+    //     Ok(sig)
+        // println!("order hash: {:?}", &order_hash);
+        // let encoded = hex::encode(order_hash.as_bytes());
+        // println!("encoded: {:?}", encoded);
+        let sig = signer.sign_message(&msg).await.unwrap();
+        println!("signature is: {}", &sig);
+        println!("v: {}", &sig.v);
+        // let r_as_hex = hex::encode(u256)
+        // println!("r: {}", hex::encode(&sig.r));
+        // println!("s: {}", hex::encode(&sig.s));
         MinimalOrder {
             exchange: self.exchange,
             maker: self.maker,
@@ -255,14 +269,14 @@ impl UnsignedOrder {
             fee_recipient: constants::OPENSEA_FEE_RECIPIENT.clone(),
             target: metadata.asset.address,
             payment_token: Address::zero(),
-            maker_relayer_fee: 1250.into(),
+            maker_relayer_fee: 500.into(),
             taker_relayer_fee: 0.into(),
-            maker_protocol_fee: 250.into(),
+            maker_protocol_fee: 0.into(),
             taker_protocol_fee: 0.into(),
-            base_price: 1.into(),
+            base_price: U256::from_dec_str("77770000000000000000").unwrap(),
             extra: 0.into(),
-            listing_time: now.into(),
-            expiration_time: expiry.into(),
+            listing_time: 1642080767.into(),
+            expiration_time: 1642340027.into(),
             salt: ethers::core::rand::random::<u64>().into(),
             fee_method: 1.into(),
             side: 0.into(),
@@ -541,8 +555,8 @@ pub async fn create_maker_order<S: Signer>(maker: &Address, metadata: Metadata, 
     // make buy order
     let unsigned = UnsignedOrder::from_metadata(maker.clone(), &metadata);
     let order_hash = unsigned.calculate_hash();
+    println!("order hash is: {:?}", order_hash);
     let signed = unsigned.sign_order(signer).await;
-
     Order {
         quantity: 1.into(),
         id: None,

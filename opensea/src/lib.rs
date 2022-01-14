@@ -16,6 +16,7 @@ pub use api::{OpenSeaApi, OpenSeaApiError, OrderRequest};
 
 mod contracts;
 pub use contracts::OpenSea;
+pub use contracts::ERC721;
 
 use std::sync::Arc;
 use thiserror::Error;
@@ -112,6 +113,9 @@ impl<M: Middleware> Client<M> {
         buy: MinimalOrder,
         sell: MinimalOrder,
     ) -> Result<ContractCall<M, ()>, ClientError> {
+        println!("Atomic match");
+        // println!("BUY: {:#?}", buy);
+        println!("SELL: {:#?}", sell);
         // make the arguments in the format the contracts expect them
         let addrs = [
             buy.exchange,
@@ -207,7 +211,7 @@ impl<M: Middleware> Client<M> {
 
 #[cfg(test)]
 mod tests {
-    use std::{convert::TryFrom, sync::Arc};
+    use std::{convert::TryFrom, sync::Arc, time::Duration};
 
     use ethers::{prelude::{BlockNumber, SignerMiddleware, LocalWallet, Signer}, providers::Provider, types::Address, utils::parse_units};
 
@@ -227,16 +231,15 @@ mod tests {
     // #[ignore]
     async fn can_buy_an_nft() {
         let wallet: LocalWallet = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
-        let wallet = wallet.with_chain_id(31337u32);
+        let wallet = wallet.with_chain_id(1u32);
 
         let provider = Provider::try_from("http://localhost:18545").unwrap();
+        let provider = provider.interval(Duration::from_millis(100));
         let provider = SignerMiddleware::new(provider, wallet.clone());
         let provider = Arc::new(provider);
 
         let taker = wallet.address();
-        // let accounts = provider.get_accounts().await.unwrap();
-        // let taker = accounts[0].clone();
-        let id = 8004.into();
+        let id = 8005.into();
         
         let address = "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d"
             .parse::<Address>()
@@ -291,12 +294,18 @@ mod tests {
         let sell = create_maker_order(&taker, metadata, wallet).await;
 
         let wallet_buyer: LocalWallet = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+        let block = provider
+            .get_block(BlockNumber::Latest)
+            .await
+            .unwrap()
+            .unwrap();
+        let timestamp = block.timestamp.as_u64();
         let args = BuyArgs {
             taker: wallet_buyer.address(),
             recipient: wallet_buyer.address(),
             token: address,
             token_id: id,
-            timestamp: None,
+            timestamp: Some(timestamp - 100),
         };
         let buy = sell.match_sell(args);
         let sell = MinimalOrder::from(sell);
