@@ -16,9 +16,10 @@ pub use api::{OpenSeaApi, OpenSeaApiError, OrderRequest};
 
 mod contracts;
 pub use contracts::OpenSea;
-pub use contracts::ERC721;
 pub use contracts::OpenseaProxyRegistry;
+pub use contracts::ERC20;
 
+use crate::constants::WETH_ADDRESS_RINKEBY;
 use std::sync::Arc;
 use thiserror::Error;
 use types::MinimalOrder;
@@ -105,7 +106,7 @@ impl<M: Middleware> Client<M> {
             let sell_hash = sell.calculate_hash();
             assert_eq!(real_hash, sell_hash);
             println!("HASH IS CORRECT!!");
-            let call = self.atomic_match(buy, sell).await?;
+            let call = self.atomic_match(buy, sell, true).await?;
             calls.push(call);
         }
 
@@ -117,13 +118,14 @@ impl<M: Middleware> Client<M> {
         // make its corresponding buy
         let buy = sell.match_sell(args.clone());
         let sell = MinimalOrder::from(sell);
-        self.atomic_match(buy, sell).await
+        self.atomic_match(buy, sell, true).await
     }
 
     pub async fn atomic_match(
         &self,
         buy: MinimalOrder,
         sell: MinimalOrder,
+        is_buyer: bool,
     ) -> Result<ContractCall<M, ()>, ClientError> {
         println!("Atomic match");
         // println!("BUY: {:#?}", buy);
@@ -207,7 +209,13 @@ impl<M: Middleware> Client<M> {
         ).unwrap().legacy();
 
         // set the value
-        let call = call.value(buy.base_price);
+        let value = if is_buyer {
+            buy.base_price
+        } else {
+            0.into()
+        };
+
+        let call = call.value(value);
 
         // set the gas
         // let gas = call.estimate_gas().await.expect("could not estimate gas");
@@ -228,7 +236,7 @@ mod tests {
     use ethers::{prelude::{BlockNumber, SignerMiddleware, LocalWallet, Signer}, providers::Provider, types::Address, utils::parse_units};
 
     use super::*;
-    use crate::{api::OpenSeaApiConfig, types::{create_maker_order, AssetId, Metadata}, constants::{OPENSEA_ADDRESS, OPENSEA_ADDRESS_RINKEBY, OPENSEA_PROXY_REGISTRY_RINKEBY}};
+    use crate::{api::OpenSeaApiConfig, types::{create_maker_order, AssetId, Metadata, SellArgs}, constants::{OPENSEA_ADDRESS, OPENSEA_ADDRESS_RINKEBY, OPENSEA_PROXY_REGISTRY_RINKEBY, WETH_ADDRESS_RINKEBY}};
 
     ethers::contract::abigen!(
         NFT,
@@ -237,6 +245,7 @@ mod tests {
         function balanceOf(address,uint256) view returns (uint256)
         function approve(address to, uint256 tokenId) public virtual override
         function setApprovalForAll(address to, bool approved) public
+        function isApprovedForAll(address owner, address operator) view returns (bool)
     ]"#
     );
 
@@ -290,15 +299,20 @@ mod tests {
 
         // check the owner matches
         let owner = nft.owner_of(id).call().await.unwrap();
-        assert_eq!(owner, taker);
+        // assert_eq!(owner, taker);
         
         // WE HAVE THE APE
 
         // create proxy (??)
-        // let prx = OpenseaProxyRegistry::new(*OPENSEA_PROXY_REGISTRY_RINKEBY, provider.clone());
+        let prx = OpenseaProxyRegistry::new(*OPENSEA_PROXY_REGISTRY_RINKEBY, provider.clone());
+        let proxy_address: Address = prx.proxies(wallet.address()).call().await.unwrap();
+        println!("proxy address: {:?}", proxy_address);
         // prx.register_proxy().send().await.unwrap().await.unwrap();
 
-        let proxy_address: Address = "0xb6a693947cfc4a0ad8ff41fc07079df118b5c3d5".parse().unwrap();
+        // let prx_address = prx.proxies
+
+        // TODO: how to find this?
+        // let proxy_address: Address = "0xb6a693947cfc4a0ad8ff41fc07079df118b5c3d5".parse().unwrap();
 
         // approve transfer to opensea
         nft.approve(proxy_address.clone(), id).from(taker.clone()).send().await.unwrap().await.unwrap();
@@ -316,7 +330,7 @@ mod tests {
             schema: "ERC721".into(),
         };
 
-        let sell = create_maker_order(&taker, metadata, wallet).await;
+        let sell = create_maker_order(&taker, metadata, wallet, false).await;
 
         let wallet_buyer: LocalWallet = "dc1235467601950f136c9ebde5478dde864851fd058ceed04cea93fae9e9b555".parse().unwrap();
         let wallet_buyer = wallet_buyer.with_chain_id(4u32);
@@ -342,12 +356,119 @@ mod tests {
         };
         let buy = sell.match_sell(args);
         let sell = MinimalOrder::from(sell);
-        let call = client.atomic_match(buy, sell).await.unwrap();
+        let call = client.atomic_match(buy, sell, true).await.unwrap();
         let call = call.gas_price(parse_units(500, 9).unwrap());
         let result = call.from(wallet_buyer.address()).gas(1_000_000).send().await.unwrap().await.unwrap();
 
         let owner = nft.owner_of(id).call().await.unwrap();
         assert_eq!(owner, wallet_buyer.address());
+    }
+
+    #[tokio::test]
+    async fn can_bid_on_erc721() {
+        let wallet: LocalWallet = "57b2de6d5ec9062543df654091f0165b947fefb39e18b206f9ca4d4b6c502fe5".parse().unwrap();
+        let wallet = wallet.with_chain_id(4u32);
+        let provider = Provider::try_from("http://localhost:8575").unwrap();
+        let provider = provider.interval(Duration::from_millis(100));
+        let provider = SignerMiddleware::new(provider, wallet.clone());
+        let provider = Arc::new(provider);
+
+        let maker = wallet.address();
+        let id: U256 = 7u64.into();
+        
+        let address = "0x8e04b806a89550332b9ee8f28cdffb72e60ef606"
+            .parse::<Address>()
+            .unwrap();
+
+        // let nft = NFT::new(address, provider.clone());
+
+        let metadata = Metadata {
+            asset: AssetId {
+                id: id.into(),
+                address: address.clone(),
+            },
+            schema: "ERC721".into(),
+        };
+
+        let buy = create_maker_order(&maker, metadata, wallet, true).await;
+
+        // Make sure we have a proxy account..
+        let prx = OpenseaProxyRegistry::new(*OPENSEA_PROXY_REGISTRY_RINKEBY, provider.clone());
+        let mut proxy_address: Address = prx.proxies(maker).call().await.unwrap();
+        if proxy_address.is_zero() {
+            // need to create proxy..
+            prx.register_proxy().send().await.unwrap().await.unwrap();
+            proxy_address = prx.proxies(maker).call().await.unwrap();
+            println!("created new proxy");
+        };
+        println!("proxy address: {:?}", proxy_address);
+
+        // need to use erc20 for bids
+        let weth = ERC20::new(*WETH_ADDRESS_RINKEBY, provider.clone());
+        
+        // deposit erc20
+        let balance: U256 = weth.balance_of(maker).call().await.unwrap();
+        if balance < buy.base_price {
+            println!("need to deposit additional weth");
+            weth.deposit().value(buy.base_price - balance).send().await.unwrap().await.unwrap();
+        }
+
+        // approve erc20
+        let approved: U256 = weth.allowance(maker, proxy_address).call().await.unwrap();
+        if approved < buy.base_price {
+            println!("need additional approval");
+            weth.approve(proxy_address, buy.base_price - approved).send().await.unwrap().await.unwrap();
+        };
+        
+        // all done from account A
+        
+        let wallet: LocalWallet = "dc1235467601950f136c9ebde5478dde864851fd058ceed04cea93fae9e9b555".parse().unwrap();
+        let wallet = wallet.with_chain_id(4u32);
+        let provider = Provider::try_from("http://localhost:8575").unwrap();
+        let provider = provider.interval(Duration::from_millis(100));
+        let provider = SignerMiddleware::new(provider, wallet.clone());
+        let provider = Arc::new(provider);
+        let client = Client::new(provider.clone(), OpenSeaApiConfig::with_api_key(""));
+
+        let prx = OpenseaProxyRegistry::new(*OPENSEA_PROXY_REGISTRY_RINKEBY, provider.clone());
+        let mut proxy_address: Address = prx.proxies(wallet.address()).call().await.unwrap();
+        if proxy_address.is_zero() {
+            // need to create proxy..
+            prx.register_proxy().send().await.unwrap().await.unwrap();
+            proxy_address = prx.proxies(wallet.address()).call().await.unwrap();
+            println!("created new proxy");
+        };
+        println!("proxy address: {:?}", proxy_address);
+
+        // approve token for sale
+        let nft = NFT::new(address, provider.clone());
+        if !nft.is_approved_for_all(wallet.address(), proxy_address).call().await.unwrap() {
+            println!("dont have approval, setting approve for all");
+            nft.set_approval_for_all(proxy_address, true).send().await.unwrap().await.unwrap();
+        }
+
+        let block = provider
+            .get_block(BlockNumber::Latest)
+            .await
+            .unwrap()
+            .unwrap();
+        let timestamp = block.timestamp.as_u64();
+        let args = SellArgs {
+            taker: wallet.address(),
+            recipient: maker,
+            token: address,
+            token_id: id,
+            timestamp: Some(timestamp - 100),
+        };
+        let sell = buy.match_buy(args);
+        let buy = MinimalOrder::from(buy);
+        let call = client.atomic_match(buy, sell, false).await.unwrap();
+        let call = call.gas_price(parse_units(500, 9).unwrap());
+        let result = call.from(wallet.address()).gas(500_000).send().await.unwrap().await.unwrap();
+
+        let owner = nft.owner_of(id).call().await.unwrap();
+        assert_eq!(owner, maker);
+        panic!("done")
     }
     
     #[tokio::test]

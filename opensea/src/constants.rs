@@ -40,3 +40,12 @@ pub static OPENSEA_PROXY_REGISTRY_RINKEBY: Lazy<Address> = Lazy::new(|| {
         .parse()
         .unwrap()
 });
+
+pub static WETH_ADDRESS_RINKEBY: Lazy<Address> = Lazy::new(|| {
+    "0xc778417e063141139fce010982780140aa0cd5ab"
+        .parse()
+        .unwrap()
+});
+
+
+// pub static TOKEN_P

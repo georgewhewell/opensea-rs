@@ -11,17 +11,13 @@ abigen!(
 );
 
 abigen!(
-    ERC721,
-    r#"[
-        approve(address spender, uint256 amount) external returns (bool)
-    ]"#,
+    OpenseaProxyRegistry,
+    "proxy_abi.json",
     event_derives(serde::Deserialize, serde::Serialize)
 );
 
 abigen!(
-    OpenseaProxyRegistry,
-    r#"[
-        registerProxy() public returns (OwnableDelegateProxy proxy)
-    ]"#,
+    ERC20,
+    "erc20_abi.json",
     event_derives(serde::Deserialize, serde::Serialize)
 );

@@ -1,4 +1,4 @@
-use crate::{constants, contracts, OrderRequest};
+use crate::{constants::{self, WETH_ADDRESS_RINKEBY}, contracts, OrderRequest};
 use chrono::NaiveDateTime;
 use eth_encode_packed::{abi::encode_packed, SolidityDataType, TakeLastXBytes};
 use ethers::{
@@ -175,7 +175,6 @@ fn u256_to_h256(u256: U256) -> H256 {
     // H256::from_str(&as_hex).unwrap()
     H256::from_slice(&buf)
 }
-const PREFIX: &str = "\x19Ethereum Signed Message:\n32";
 
 impl UnsignedOrder {
     async fn sign_order(self, signer: impl Signer) -> MinimalOrder {
@@ -273,7 +272,76 @@ impl UnsignedOrder {
         keccak256(&packed).into()
     }
 
-    fn from_metadata(maker: Address, metadata: &Metadata) -> Self {
+    fn buy_from_metadata(maker: Address, metadata: &Metadata) -> Self {
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let expiry = now + 3600;
+
+        let schema = &metadata.schema;
+        let (calldata, pattern) = match schema.as_str() {
+            "ERC721" => {
+                let abi = ethers::contract::BaseContract::from(contracts::OPENSEA_ABI.clone());
+                let sig = id("transferFrom(address,address,uint256)");
+                let data = (Address::zero(), maker, metadata.asset.id);
+
+                let replacement_pattern = hex::decode("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
+                (
+                    abi.encode_with_selector(sig, data).unwrap(),
+                    replacement_pattern,
+                )
+            }
+            "ERC1155" => {
+                let replacement_pattern = hex::decode("000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
+
+                let abi = ethers::contract::BaseContract::from(contracts::OPENSEA_ABI.clone());
+                let sig = id("safeTransferFrom(address,address,uint256,uint256,bytes)");
+                let data = (
+                    maker,
+                    Address::zero(),
+                    metadata.asset.id,
+                    U256::from(1u32),
+                    Vec::<u8>::new(),
+                );
+                (
+                    abi.encode_with_selector(sig, data).unwrap(),
+                    replacement_pattern,
+                )
+            }
+            unsupported => {
+                panic!("Unsupported schema: {}", unsupported)
+            }
+        };
+
+        Self {
+            exchange: constants::OPENSEA_ADDRESS_RINKEBY.clone(),
+            maker: maker,
+            taker: Address::zero(),
+            fee_recipient: constants::OPENSEA_FEE_RECIPIENT_RINKEBY.clone(),
+            target: metadata.asset.address,
+            payment_token: *WETH_ADDRESS_RINKEBY,
+            maker_relayer_fee: 500.into(),
+            taker_relayer_fee: 0.into(),
+            maker_protocol_fee: 0.into(),
+            taker_protocol_fee: 0.into(),
+            base_price: U256::from_dec_str("70000000000000000").unwrap(),
+            extra: 0.into(),
+            listing_time: (now - 3600).into(),
+            expiration_time: 0.into(),
+            salt: ethers::core::rand::random::<u64>().into(),
+            fee_method: 1.into(),
+            side: 0.into(),
+            sale_kind: 0.into(),
+            how_to_call: 0.into(),
+            calldata: calldata,
+            replacement_pattern: pattern,
+            static_target: Address::zero(),
+            static_extradata: Bytes::default(),
+        }
+    }
+
+    fn sell_from_metadata(maker: Address, metadata: &Metadata) -> Self {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -494,6 +562,14 @@ pub struct BuyArgs {
     pub timestamp: Option<u64>,
 }
 
+pub struct SellArgs {
+    pub taker: Address,
+    pub recipient: Address,
+    pub timestamp: Option<u64>,
+    pub token: Address,
+    pub token_id: U256,
+}
+
 impl Order {
     pub fn match_sell(&self, args: BuyArgs) -> MinimalOrder {
         let mut order = MinimalOrder::from(self.clone());
@@ -504,6 +580,63 @@ impl Order {
         order.maker = args.taker;
         order.taker = self.maker.address;
         order.target = args.token;
+        order.expiration_time = 0.into();
+        order.extra = 0.into();
+        order.salt = ethers::core::rand::random::<u64>().into();
+        order.fee_recipient = Address::zero(); // *constants::OPENSEA_FEE_RECIPIENT;
+        
+        // order.maker_relayer_fee = 0.into();
+        // order.taker_relayer_fee = 0.into();
+        // order.maker_protocol_fee = 0.into();
+        // order.taker_protocol_fee = 0.into();
+
+        let schema = &self.metadata.schema;
+        let calldata = if schema == "ERC721" {
+            // TODO: abigen should emit this as a typesafe method over a "Typed" BaseContract
+            let abi = ethers::contract::BaseContract::from(contracts::OPENSEA_ABI.clone());
+            let sig = id("transferFrom(address,address,uint256)");
+            let data = (Address::zero(), args.recipient, args.token_id);
+
+            order.replacement_pattern = hex::decode("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
+            abi.encode_with_selector(sig, data).unwrap()
+        } else if schema == "ERC1155" {
+            // safeTransferFrom(address,address,uint256,uint256,bytes), replacement for `from`
+            order.replacement_pattern = hex::decode("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
+
+            let abi = ethers::contract::BaseContract::from(contracts::OPENSEA_ABI.clone());
+            let sig = id("safeTransferFrom(address,address,uint256,uint256,bytes)");
+            let data = (
+                Address::zero(),
+                args.recipient,
+                args.token_id,
+                self.quantity,
+                Vec::<u8>::new(),
+            );
+            abi.encode_with_selector(sig, data).unwrap()
+        } else {
+            panic!("Unsupported schema")
+        };
+        order.calldata = calldata;
+
+        let listing_time = args
+            .timestamp
+            .unwrap_or_else(|| chrono::offset::Local::now().timestamp() as u64 - 100);
+        order.listing_time = listing_time.into();
+
+        order
+    }
+
+    pub fn match_buy(&self, args: SellArgs) -> MinimalOrder {
+        let mut order = MinimalOrder::from(self.clone());
+
+        // sell order
+        order.side = 1;
+
+        // the order maker is our taker
+        // order.maker = args.taker;
+        order.taker = args.taker;
+        
+        // order.target = self.target;
         order.expiration_time = 0.into();
         order.extra = 0.into();
         order.salt = ethers::core::rand::random::<u64>().into();
@@ -604,9 +737,14 @@ pub enum OrderSide {
     Sell,
 }
 
-pub async fn create_maker_order<S: Signer>(maker: &Address, metadata: Metadata, signer: S) -> Order {
+pub async fn create_maker_order<S: Signer>(maker: &Address, metadata: Metadata, signer: S, is_buy: bool) -> Order {
     // make buy order
-    let unsigned = UnsignedOrder::from_metadata(maker.clone(), &metadata);
+    let unsigned = if is_buy {
+        UnsignedOrder::buy_from_metadata(maker.clone(), &metadata)
+    } else {
+        UnsignedOrder::sell_from_metadata(maker.clone(), &metadata)
+    };
+
     let order_hash = unsigned.calculate_hash();
     println!("order hash is: {:?}", order_hash);
     let signed = unsigned.sign_order(signer).await;
