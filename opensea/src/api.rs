@@ -5,7 +5,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Network, Order, Asset};
+use crate::types::{Asset, Network, Order};
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -90,6 +90,20 @@ impl OpenSeaApi {
                 id: req.token_id,
             })?;
         Ok(order)
+    }
+
+    pub async fn post_order(&self, req: Order) -> Result<Vec<Order>, OpenSeaApiError> {
+        let orderbook = self.network.orderbook();
+        let url = format!("{}/orders/post/", orderbook);
+
+        let res = self.client.post(url).json(&req).send().await?;
+        let text = res.text().await?;
+        println!("resp: {text}");
+        // println!("test: {}", &text);
+        // let resp: OrderResponse = serde_json::from_str(&text)?;
+
+        todo!()
+        // Ok(resp.orders)
     }
 }
 

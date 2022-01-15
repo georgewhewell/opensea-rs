@@ -1,11 +1,14 @@
-use crate::{constants::{self, WETH_ADDRESS_RINKEBY}, contracts, OrderRequest};
+use crate::{
+    constants::{self, WETH_ADDRESS_RINKEBY},
+    contracts, OrderRequest,
+};
 use chrono::NaiveDateTime;
 use eth_encode_packed::{abi::encode_packed, SolidityDataType, TakeLastXBytes};
 use ethers::{
     core::utils::id,
-    prelude::{LocalWallet, Signer, rand::thread_rng, SignerMiddleware},
+    prelude::{rand::thread_rng, LocalWallet, Signer, SignerMiddleware},
     types::{Address, Bytes, H256, U256},
-    utils::{keccak256, hash_message},
+    utils::{hash_message, keccak256},
 };
 use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
@@ -25,6 +28,11 @@ impl Network {
     }
 
     pub fn orderbook(&self) -> String {
+        let url = self.url();
+        format!("{}/wyvern/v{}", url, constants::ORDERBOOK_VERSION)
+    }
+
+    pub fn orderbook_post(&self) -> String {
         let url = self.url();
         format!("{}/wyvern/v{}", url, constants::ORDERBOOK_VERSION)
     }
@@ -177,38 +185,24 @@ fn u256_to_h256(u256: U256) -> H256 {
 }
 
 impl UnsignedOrder {
-    async fn sign_order(self, signer: impl Signer) -> MinimalOrder {
+    pub async fn sign_order(self, signer: impl Signer) -> MinimalOrder {
         let order_hash = self.calculate_hash();
         println!("order hash: {:?}", &order_hash);
-        let mut msg = String::from("\x19Ethereum Signed Message:\n32").as_bytes().to_vec();
+        let mut msg = String::from("\x19Ethereum Signed Message:\n32")
+            .as_bytes()
+            .to_vec();
         msg.extend_from_slice(order_hash.as_bytes());
 
         let hash_to_sign = keccak256(&msg);
-        
+
         // let hash_to_sign = keccak256(format!("\x19Ethereum Signed Message:\n32", order_hash.as_bytes()));
         println!("hash to sign: {:?}", hex::encode(&hash_to_sign));
 
-        // signer.
-        // let encc = format!("0x{}", hex::encode(&order_hash));
-
-        // let eth_message = format!("{}{}", PREFIX, hex::encode(&order_hash)).into_bytes();
-        // eth_message.extend_from_slice(message);
-    
-        // let msg = format!("0x{}", hex::encode(keccak256(&eth_message)));
-        // println!("hash: {}", &msg);
-        // let hashed = hash_message(order_hash);
-        // let msg = format!("0x{}", hex::encode(keccak256(order_hash)));
-        // let sig = signer.sign_message(msg).await?;
-        // Ok(sig)
-        // println!("order hash: {:?}", &order_hash);
-        // let encoded = hex::encode(order_hash.as_bytes());
-        // println!("encoded: {:?}", encoded);
         let sig = signer.sign_message(order_hash.as_bytes()).await.unwrap();
         println!("signature is: {}", &sig);
         println!("v: {}", &sig.v);
-        // let r_as_hex = hex::encode(u256)
-        // println!("r: {}", hex::encode(&sig.r));
-        // println!("s: {}", hex::encode(&sig.s));
+        println!("r: {}", sig.r);
+        println!("s: {}", sig.s);
         MinimalOrder {
             exchange: self.exchange,
             maker: self.maker,
@@ -298,8 +292,8 @@ impl UnsignedOrder {
                 let abi = ethers::contract::BaseContract::from(contracts::OPENSEA_ABI.clone());
                 let sig = id("safeTransferFrom(address,address,uint256,uint256,bytes)");
                 let data = (
-                    maker,
                     Address::zero(),
+                    maker,
                     metadata.asset.id,
                     U256::from(1u32),
                     Vec::<u8>::new(),
@@ -315,10 +309,10 @@ impl UnsignedOrder {
         };
 
         Self {
-            exchange: constants::OPENSEA_ADDRESS_RINKEBY.clone(),
+            exchange: *constants::OPENSEA_ADDRESS_RINKEBY,
             maker: maker,
             taker: Address::zero(),
-            fee_recipient: constants::OPENSEA_FEE_RECIPIENT_RINKEBY.clone(),
+            fee_recipient: *constants::OPENSEA_FEE_RECIPIENT_RINKEBY,
             target: metadata.asset.address,
             payment_token: *WETH_ADDRESS_RINKEBY,
             maker_relayer_fee: 500.into(),
@@ -328,7 +322,7 @@ impl UnsignedOrder {
             base_price: U256::from_dec_str("70000000000000000").unwrap(),
             extra: 0.into(),
             listing_time: (now - 3600).into(),
-            expiration_time: 0.into(),
+            expiration_time: expiry.into(),
             salt: ethers::core::rand::random::<u64>().into(),
             fee_method: 1.into(),
             side: 0.into(),
@@ -626,39 +620,19 @@ impl Order {
         order
     }
 
-    pub fn match_buy(&self, args: SellArgs) -> MinimalOrder {
-        let mut order = MinimalOrder::from(self.clone());
-
-        // sell order
-        order.side = 1;
-
-        // the order maker is our taker
-        // order.maker = args.taker;
-        order.taker = args.taker;
-        
-        // order.target = self.target;
-        order.expiration_time = 0.into();
-        order.extra = 0.into();
-        order.salt = ethers::core::rand::random::<u64>().into();
-        order.fee_recipient = Address::zero(); // *constants::OPENSEA_FEE_RECIPIENT;
-        
-        // order.maker_relayer_fee = 0.into();
-        // order.taker_relayer_fee = 0.into();
-        // order.maker_protocol_fee = 0.into();
-        // order.taker_protocol_fee = 0.into();
-
+    pub fn match_buy(&self, args: SellArgs) -> UnsignedOrder {
         let schema = &self.metadata.schema;
-        let calldata = if schema == "ERC721" {
+        let (replacement_pattern, calldata) = if schema == "ERC721" {
             // TODO: abigen should emit this as a typesafe method over a "Typed" BaseContract
             let abi = ethers::contract::BaseContract::from(contracts::OPENSEA_ABI.clone());
             let sig = id("transferFrom(address,address,uint256)");
-            let data = (Address::zero(), args.recipient, args.token_id);
+            let data = (args.taker, Address::zero(), args.token_id);
 
-            order.replacement_pattern = hex::decode("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
-            abi.encode_with_selector(sig, data).unwrap()
+            let replacement_pattern = hex::decode("000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
+            (replacement_pattern, abi.encode_with_selector(sig, data).unwrap())
         } else if schema == "ERC1155" {
             // safeTransferFrom(address,address,uint256,uint256,bytes), replacement for `from`
-            order.replacement_pattern = hex::decode("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
+            let replacement_pattern = hex::decode("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
 
             let abi = ethers::contract::BaseContract::from(contracts::OPENSEA_ABI.clone());
             let sig = id("safeTransferFrom(address,address,uint256,uint256,bytes)");
@@ -669,18 +643,40 @@ impl Order {
                 self.quantity,
                 Vec::<u8>::new(),
             );
-            abi.encode_with_selector(sig, data).unwrap()
+            (replacement_pattern, abi.encode_with_selector(sig, data).unwrap())
         } else {
             panic!("Unsupported schema")
         };
-        order.calldata = calldata;
 
         let listing_time = args
             .timestamp
             .unwrap_or_else(|| chrono::offset::Local::now().timestamp() as u64 - 100);
-        order.listing_time = listing_time.into();
 
-        order
+        UnsignedOrder {
+            exchange: self.exchange,
+            maker: args.taker,
+            taker: self.maker.address,
+            fee_recipient: Address::zero(), // *constants::OPENSEA_FEE_RECIPIENT;
+            target: self.target,
+            static_target: self.static_target,
+            payment_token: self.payment_token,
+            maker_relayer_fee: self.maker_relayer_fee,
+            taker_relayer_fee: self.taker_relayer_fee,
+            maker_protocol_fee: self.maker_protocol_fee,
+            taker_protocol_fee: self.taker_protocol_fee,
+            base_price: self.base_price,
+            extra: self.extra,
+            listing_time: listing_time.into(),
+            expiration_time: self.expiration_time.into(),
+            salt: ethers::core::rand::random::<u64>().into(),
+            fee_method: self.fee_method,
+            side: 1.into(),
+            sale_kind: self.sale_kind,
+            how_to_call: self.how_to_call,
+            calldata: calldata,
+            replacement_pattern: replacement_pattern,
+            static_extradata: self.static_extradata.clone(),
+        }
     }
 }
 
@@ -737,7 +733,12 @@ pub enum OrderSide {
     Sell,
 }
 
-pub async fn create_maker_order<S: Signer>(maker: &Address, metadata: Metadata, signer: S, is_buy: bool) -> Order {
+pub async fn create_maker_order<S: Signer>(
+    maker: &Address,
+    metadata: Metadata,
+    signer: S,
+    is_buy: bool,
+) -> Order {
     // make buy order
     let unsigned = if is_buy {
         UnsignedOrder::buy_from_metadata(maker.clone(), &metadata)
@@ -768,8 +769,6 @@ pub async fn create_maker_order<S: Signer>(maker: &Address, metadata: Metadata, 
         cancelled: Some(false),
         finalized: Some(false),
         marked_invalid: Some(false),
-        fee_recipient: User { address: signed.fee_recipient, user: None, profile_img_url: None, config: None },
-        maker: User { address: signed.maker, user: None, profile_img_url: None, config: None },
         salt: signed.salt,
         payment_token: signed.payment_token,
         extra: signed.extra,
@@ -783,7 +782,24 @@ pub async fn create_maker_order<S: Signer>(maker: &Address, metadata: Metadata, 
         static_target: signed.static_target,
         static_extradata: signed.static_extradata,
         exchange: signed.exchange,
-        taker: User { address: signed.taker, user: None, profile_img_url: None, config: None },
+        fee_recipient: User {
+            address: signed.fee_recipient,
+            user: None,
+            profile_img_url: None,
+            config: None,
+        },
+        maker: User {
+            address: signed.maker,
+            user: None,
+            profile_img_url: None,
+            config: None,
+        },
+        taker: User {
+            address: signed.taker,
+            user: None,
+            profile_img_url: None,
+            config: None,
+        },
         metadata: metadata,
         fee_method: signed.fee_method,
     }
@@ -794,12 +810,12 @@ mod tests {
     use std::convert::TryFrom;
     use std::sync::Arc;
 
-    use ethers::prelude::{Provider, Middleware};
     use ethers::prelude::rand::thread_rng;
+    use ethers::prelude::{Middleware, Provider};
     use ethers::signers::Signer;
 
-    use crate::Client;
     use crate::api::OpenSeaApiConfig;
+    use crate::Client;
 
     use super::*;
 
