@@ -10,14 +10,18 @@ abigen!(
     event_derives(serde::Deserialize, serde::Serialize)
 );
 
-abigen!(
-    OpenseaProxyRegistry,
-    "proxy_abi.json",
-    event_derives(serde::Deserialize, serde::Serialize)
-);
+abigen!(OpenseaProxyRegistry, "proxy_abi.json",);
+
+abigen!(ERC20, "erc20_abi.json",);
 
 abigen!(
-    ERC20,
-    "erc20_abi.json",
-    event_derives(serde::Deserialize, serde::Serialize)
+    NFT,
+    r#"[
+        function ownerOf(uint256 tokenId) public view override returns (address)
+        function balanceOf(address,uint256) view returns (uint256)
+        function approve(address to, uint256 tokenId) public virtual override
+        function setApprovalForAll(address to, bool approved) public
+        function isApprovedForAll(address owner, address operator) view returns (bool)
+        function getApproved(uint256 tokenId) view returns (address)
+    ]"#
 );

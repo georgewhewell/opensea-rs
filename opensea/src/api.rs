@@ -5,7 +5,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Asset, Network, Order};
+use crate::types::{Asset, MinimalOrder, Network, Order};
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -71,9 +71,12 @@ impl OpenSeaApi {
         );
         map.insert("limit", serde_json::to_value(req.limit)?);
 
-        let res = self.client.get(url).query(&map).send().await?;
+        let req = self.client.get(url).query(&map).build().unwrap();
+        let url = req.url();
+        println!("url is: {:?}", url.as_str());
+        let res = self.client.execute(req).await?;
         let text = res.text().await?;
-        // println!("test: {}", &text);
+        println!("text: {}", &text);
         let resp: OrderResponse = serde_json::from_str(&text)?;
 
         Ok(resp.orders)
@@ -92,18 +95,18 @@ impl OpenSeaApi {
         Ok(order)
     }
 
-    pub async fn post_order(&self, req: Order) -> Result<Vec<Order>, OpenSeaApiError> {
+    pub async fn post_order(&self, req: MinimalOrder) -> Result<Order, OpenSeaApiError> {
         let orderbook = self.network.orderbook();
         let url = format!("{}/orders/post/", orderbook);
-
+        println!("call {url}");
+        println!("order is: {}", serde_json::to_string(&req).unwrap());
         let res = self.client.post(url).json(&req).send().await?;
         let text = res.text().await?;
         println!("resp: {text}");
         // println!("test: {}", &text);
-        // let resp: OrderResponse = serde_json::from_str(&text)?;
+        let resp: Order = serde_json::from_str(&text)?;
 
-        todo!()
-        // Ok(resp.orders)
+        Ok(resp)
     }
 }
 

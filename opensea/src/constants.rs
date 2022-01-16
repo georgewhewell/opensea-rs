@@ -20,7 +20,9 @@ pub static OPENSEA_FEE_RECIPIENT: Lazy<Address> = Lazy::new(|| {
 });
 
 pub static OPENSEA_FEE_RECIPIENT_RINKEBY: Lazy<Address> = Lazy::new(|| {
-    "0xa839d4b5a36265795eba6894651a8af3d0ae2e68".parse().unwrap()
+    "0xa839D4b5A36265795EbA6894651a8aF3d0aE2e68"
+        .parse()
+        .unwrap()
 });
 
 pub static OPENSEA_ADDRESS: Lazy<Address> = Lazy::new(|| {
@@ -47,5 +49,14 @@ pub static WETH_ADDRESS_RINKEBY: Lazy<Address> = Lazy::new(|| {
         .unwrap()
 });
 
+pub static OPENSEA_TRANSFER_PROXY_MAINNET: Lazy<Address> = Lazy::new(|| {
+    "0xe5c783ee536cf5e63e792988335c4255169be4e1"
+        .parse()
+        .unwrap()
+});
 
-// pub static TOKEN_P
+pub static OPENSEA_TRANSFER_PROXY_RINKEBY: Lazy<Address> = Lazy::new(|| {
+    "0x82d102457854c985221249f86659c9d6cf12aa72"
+        .parse()
+        .unwrap()
+});

@@ -10,7 +10,7 @@ use ethers::{
     types::{Address, Bytes, H256, U256},
     utils::{hash_message, keccak256},
 };
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeMap, Deserialize, Serialize, Serializer};
 use std::convert::TryInto;
 
 #[derive(Clone, Debug)]
@@ -91,8 +91,17 @@ pub struct UnsignedOrder {
     pub static_extradata: Bytes,
 }
 
+pub fn ser_u256_dec<S>(id: &U256, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    s.serialize_str(&format!("{:.0}", id))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 /// The exact arguments required to provide to the smart contract
+///
 pub struct MinimalOrder {
     // addresses involved
     pub exchange: Address,
@@ -104,16 +113,25 @@ pub struct MinimalOrder {
     pub payment_token: Address,
 
     // fees
+    #[serde(serialize_with = "ser_u256_dec")]
     pub maker_relayer_fee: U256,
+    #[serde(serialize_with = "ser_u256_dec")]
     pub taker_relayer_fee: U256,
+    #[serde(serialize_with = "ser_u256_dec")]
     pub maker_protocol_fee: U256,
+    #[serde(serialize_with = "ser_u256_dec")]
     pub taker_protocol_fee: U256,
 
+    #[serde(serialize_with = "ser_u256_dec")]
     pub base_price: U256,
     // pub current_price: U256,
+    #[serde(serialize_with = "ser_u256_dec")]
     pub extra: U256,
+    #[serde(serialize_with = "ser_u256_dec")]
     pub listing_time: U256,
+    #[serde(serialize_with = "ser_u256_dec")]
     pub expiration_time: U256,
+    #[serde(serialize_with = "ser_u256_dec")]
     pub salt: U256,
 
     pub fee_method: u8,
@@ -127,6 +145,10 @@ pub struct MinimalOrder {
 
     pub static_extradata: Bytes,
 
+    #[serde(serialize_with = "ser_u256_dec")]
+    pub quantity: U256,
+    pub metadata: Metadata,
+    pub hash: H256,
     pub v: u8,
     pub r: H256,
     pub s: H256,
@@ -177,33 +199,19 @@ pub struct BidArgs {
 
 // wtf
 fn u256_to_h256(u256: U256) -> H256 {
-    let mut buf = vec![0; 32];
-    u256.to_big_endian(&mut buf);
-    // let as_hex = hex::encode(&buf);
-    // H256::from_str(&as_hex).unwrap()
-    H256::from_slice(&buf)
+    // let mut buf = vec![0; 32];
+    let mut out = H256::zero();
+    u256.to_big_endian(&mut out.0);
+    out
+    // H256::from_slice(&buf)
 }
 
 impl UnsignedOrder {
-    pub async fn sign_order(self, signer: impl Signer) -> MinimalOrder {
+    pub async fn sign_order(self, signer: impl Signer, metadata: Metadata) -> MinimalOrder {
         let order_hash = self.calculate_hash();
-        println!("order hash: {:?}", &order_hash);
-        let mut msg = String::from("\x19Ethereum Signed Message:\n32")
-            .as_bytes()
-            .to_vec();
-        msg.extend_from_slice(order_hash.as_bytes());
-
-        let hash_to_sign = keccak256(&msg);
-
-        // let hash_to_sign = keccak256(format!("\x19Ethereum Signed Message:\n32", order_hash.as_bytes()));
-        println!("hash to sign: {:?}", hex::encode(&hash_to_sign));
-
         let sig = signer.sign_message(order_hash.as_bytes()).await.unwrap();
-        println!("signature is: {}", &sig);
-        println!("v: {}", &sig.v);
-        println!("r: {}", sig.r);
-        println!("s: {}", sig.s);
         MinimalOrder {
+            quantity: U256::from(1u64),
             exchange: self.exchange,
             maker: self.maker,
             taker: self.taker,
@@ -227,6 +235,8 @@ impl UnsignedOrder {
             calldata: self.calldata,
             replacement_pattern: self.replacement_pattern,
             static_extradata: self.static_extradata,
+            hash: order_hash,
+            metadata: metadata,
             v: sig.v.try_into().unwrap(),
             r: u256_to_h256(sig.r),
             s: u256_to_h256(sig.s),
@@ -266,7 +276,7 @@ impl UnsignedOrder {
         keccak256(&packed).into()
     }
 
-    fn buy_from_metadata(maker: Address, metadata: &Metadata) -> Self {
+    fn buy_from_metadata(maker: Address, metadata: &Metadata, payment_token: Address) -> Self {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -279,7 +289,6 @@ impl UnsignedOrder {
                 let abi = ethers::contract::BaseContract::from(contracts::OPENSEA_ABI.clone());
                 let sig = id("transferFrom(address,address,uint256)");
                 let data = (Address::zero(), maker, metadata.asset.id);
-
                 let replacement_pattern = hex::decode("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
                 (
                     abi.encode_with_selector(sig, data).unwrap(),
@@ -312,16 +321,18 @@ impl UnsignedOrder {
             exchange: *constants::OPENSEA_ADDRESS_RINKEBY,
             maker: maker,
             taker: Address::zero(),
-            fee_recipient: *constants::OPENSEA_FEE_RECIPIENT_RINKEBY,
+            // testnests frontend uses mainnet address..
+            fee_recipient: *constants::OPENSEA_FEE_RECIPIENT,
+            // fee_recipient: *constants::OPENSEA_FEE_RECIPIENT_RINKEBY,
             target: metadata.asset.address,
-            payment_token: *WETH_ADDRESS_RINKEBY,
-            maker_relayer_fee: 500.into(),
-            taker_relayer_fee: 0.into(),
+            payment_token,
+            maker_relayer_fee: 0.into(),
+            taker_relayer_fee: 2000.into(),
             maker_protocol_fee: 0.into(),
             taker_protocol_fee: 0.into(),
             base_price: U256::from_dec_str("70000000000000000").unwrap(),
             extra: 0.into(),
-            listing_time: (now - 3600).into(),
+            listing_time: now.into(),
             expiration_time: expiry.into(),
             salt: ethers::core::rand::random::<u64>().into(),
             fee_method: 1.into(),
@@ -335,7 +346,11 @@ impl UnsignedOrder {
         }
     }
 
-    fn sell_from_metadata(maker: Address, metadata: &Metadata) -> Self {
+    fn sell_from_metadata(
+        maker: Address,
+        metadata: &Metadata,
+        payment_token: Option<Address>,
+    ) -> Self {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -378,12 +393,12 @@ impl UnsignedOrder {
         };
 
         Self {
-            exchange: constants::OPENSEA_ADDRESS_RINKEBY.clone(),
+            exchange: *constants::OPENSEA_ADDRESS_RINKEBY,
             maker: maker,
             taker: Address::zero(),
-            fee_recipient: constants::OPENSEA_FEE_RECIPIENT_RINKEBY.clone(),
+            fee_recipient: *constants::OPENSEA_FEE_RECIPIENT_RINKEBY,
             target: metadata.asset.address,
-            payment_token: Address::zero(),
+            payment_token: payment_token.unwrap_or_else(|| Address::zero()),
             maker_relayer_fee: 500.into(),
             taker_relayer_fee: 0.into(),
             maker_protocol_fee: 0.into(),
@@ -408,6 +423,7 @@ impl UnsignedOrder {
 impl From<Order> for MinimalOrder {
     fn from(order: Order) -> Self {
         Self {
+            quantity: order.quantity,
             exchange: order.exchange,
             maker: order.maker.address,
             taker: order.taker.address,
@@ -426,6 +442,8 @@ impl From<Order> for MinimalOrder {
             calldata: order.calldata,
             replacement_pattern: order.replacement_pattern,
             static_extradata: order.static_extradata,
+            hash: order.order_hash,
+            metadata: order.metadata,
             v: order.v as u8,
             r: order.r,
             s: order.s,
@@ -505,10 +523,10 @@ pub struct Order {
     pub target: Address,
     pub how_to_call: u8,
 
-    pub approved_on_chain: Option<bool>,
-    pub cancelled: Option<bool>,
-    pub finalized: Option<bool>,
-    pub marked_invalid: Option<bool>,
+    // pub approved_on_chain: Option<bool>,
+    // pub cancelled: Option<bool>,
+    // pub finalized: Option<bool>,
+    // pub marked_invalid: Option<bool>,
     pub fee_recipient: User,
     pub maker: User,
 
@@ -578,7 +596,7 @@ impl Order {
         order.extra = 0.into();
         order.salt = ethers::core::rand::random::<u64>().into();
         order.fee_recipient = Address::zero(); // *constants::OPENSEA_FEE_RECIPIENT;
-        
+
         // order.maker_relayer_fee = 0.into();
         // order.taker_relayer_fee = 0.into();
         // order.maker_protocol_fee = 0.into();
@@ -629,7 +647,10 @@ impl Order {
             let data = (args.taker, Address::zero(), args.token_id);
 
             let replacement_pattern = hex::decode("000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
-            (replacement_pattern, abi.encode_with_selector(sig, data).unwrap())
+            (
+                replacement_pattern,
+                abi.encode_with_selector(sig, data).unwrap(),
+            )
         } else if schema == "ERC1155" {
             // safeTransferFrom(address,address,uint256,uint256,bytes), replacement for `from`
             let replacement_pattern = hex::decode("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap().into();
@@ -643,7 +664,10 @@ impl Order {
                 self.quantity,
                 Vec::<u8>::new(),
             );
-            (replacement_pattern, abi.encode_with_selector(sig, data).unwrap())
+            (
+                replacement_pattern,
+                abi.encode_with_selector(sig, data).unwrap(),
+            )
         } else {
             panic!("Unsupported schema")
         };
@@ -689,6 +713,7 @@ pub struct Metadata {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AssetId {
     #[serde(deserialize_with = "u256_from_dec_str")]
+    #[serde(serialize_with = "ser_u256_dec")]
     pub id: U256,
     pub address: Address,
 }
@@ -738,17 +763,18 @@ pub async fn create_maker_order<S: Signer>(
     metadata: Metadata,
     signer: S,
     is_buy: bool,
+    payment_token: Option<Address>,
 ) -> Order {
     // make buy order
     let unsigned = if is_buy {
-        UnsignedOrder::buy_from_metadata(maker.clone(), &metadata)
+        UnsignedOrder::buy_from_metadata(maker.clone(), &metadata, payment_token.unwrap())
     } else {
-        UnsignedOrder::sell_from_metadata(maker.clone(), &metadata)
+        UnsignedOrder::sell_from_metadata(maker.clone(), &metadata, payment_token)
     };
 
     let order_hash = unsigned.calculate_hash();
     println!("order hash is: {:?}", order_hash);
-    let signed = unsigned.sign_order(signer).await;
+    let signed = unsigned.sign_order(signer, metadata.clone()).await;
     // println!("signed hash: {:?}", signed)
     Order {
         quantity: 1.into(),
@@ -765,10 +791,10 @@ pub async fn create_maker_order<S: Signer>(
         sale_kind: signed.sale_kind,
         target: signed.target,
         how_to_call: signed.how_to_call,
-        approved_on_chain: Some(false),
-        cancelled: Some(false),
-        finalized: Some(false),
-        marked_invalid: Some(false),
+        // approved_on_chain: Some(false),
+        // cancelled: Some(false),
+        // finalized: Some(false),
+        // marked_invalid: Some(false),
         salt: signed.salt,
         payment_token: signed.payment_token,
         extra: signed.extra,
